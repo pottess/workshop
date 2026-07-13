@@ -1206,6 +1206,74 @@ function EntryScreen({ setState }: { setState: React.Dispatch<React.SetStateActi
   );
 }
 
+function workshopStartedKey(participantId: string) {
+  return `${STORAGE_KEY}:started:${participantId}`;
+}
+
+function WorkshopOpening({ state, setState, onStart }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; onStart: () => void }) {
+  const openModal = useActionModal();
+  const participant = currentParticipant(state);
+  const agenda = [
+    { day: "Dia 1", title: "Alinhamento e validação inicial", items: ["Boas-vindas", "Apresentação dos participantes", "Validação dos fluxos", "Reforma Tributária", "Validação dos KDDs"] },
+    { day: "Dia 2", title: "Hipóteses e priorização", items: ["Continuação da validação das etapas", "Criação de hipóteses", "Identificação de ofensores", "Priorização por etapa"] },
+    { day: "Dia 3", title: "Planos de ação", items: ["Construção dos planos", "Riscos e premissas", "Métricas", "Critérios de invalidação", "Consolidação final"] },
+  ];
+  const outcomes = ["KDDs validados", "hipóteses priorizadas", "ofensores identificados", "planos de ação estruturados", "próximos passos definidos"];
+  const showDynamics = () => openModal({
+    title: "Resumo da dinâmica",
+    message: "Cada etapa será revisada em sequência. Participantes contribuem com dores, dúvidas, hipóteses e ofensores. A facilitadora conduz a validação, consolida decisões e avança a jornada do workshop.",
+    confirmLabel: "Entendi",
+    onSubmit: () => undefined,
+  });
+  return (
+    <main className="min-h-screen bg-[#F6F6F4] p-5 text-[#2D2A26]">
+      <section className="mx-auto flex min-h-[calc(100vh-40px)] max-w-[1240px] flex-col justify-center gap-6">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#2D2A26] text-[#FFC629] shadow-sm"><Layers3 size={28} /></span>
+            <div>
+              <h1 className="text-3xl font-bold leading-tight">Workshop de Acordos</h1>
+              <p className="mt-1 text-sm font-bold uppercase tracking-[0.16em] text-[#756F68]">Validação de processo, KDDs, hipóteses e planos de ação</p>
+            </div>
+          </div>
+          <button type="button" onClick={() => setState((s) => ({ ...s, currentParticipantId: "" }))} className="inline-flex h-10 items-center rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] hover:border-[#2D2A26]">Sair</button>
+        </header>
+
+        <section className="grid gap-6 rounded-xl border border-[#D8D8D8] bg-white p-6 shadow-sm lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="flex flex-col justify-between gap-6">
+            <div>
+              <Badge tone="bg-[#FFF4CC] text-[#6F5400]">{participant?.status === "facilitador" ? "Facilitadora" : "Participante"}</Badge>
+              <h2 className="mt-5 max-w-3xl text-5xl font-bold leading-tight">Bem-vinda à sala de trabalho da semana</h2>
+              <p className="mt-5 max-w-2xl text-lg leading-8 text-[#5B5650]">Vamos revisar o processo de Acordos ponta a ponta, validar decisões importantes, identificar impactos da Reforma Tributária, criar hipóteses e construir planos de ação.</p>
+            </div>
+            <div className="grid gap-3 rounded-lg bg-[#FFF9E3] p-4 sm:grid-cols-5">
+              {outcomes.map((outcome) => <div key={outcome} className="rounded-md bg-white px-3 py-3 text-sm font-bold leading-5 shadow-sm">{outcome}</div>)}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={onStart} className="inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#FFC629] px-6 text-base font-bold text-[#2D2A26] shadow-sm transition hover:bg-[#FFD65E]"><CheckCircle2 size={20} />Começar</button>
+              <button type="button" onClick={showDynamics} className="inline-flex h-12 items-center justify-center rounded-md border border-[#D8D8D8] bg-white px-5 text-base font-bold text-[#2D2A26] transition hover:border-[#2D2A26]">Ver resumo da dinâmica</button>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {agenda.map((day, index) => (
+              <article key={day.day} className="rounded-lg border border-[#D8D8D8] bg-[#FAFAF9] p-4">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#2D2A26] text-sm font-bold text-[#FFC629]">{index + 1}</span>
+                  <div>
+                    <h3 className="text-lg font-bold">{day.day} · {day.title}</h3>
+                    <div className="mt-3 flex flex-wrap gap-2">{day.items.map((itemValue) => <span key={itemValue} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-[#54504A] shadow-sm">{itemValue}</span>)}</div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+    </main>
+  );
+}
+
 function AppShell({ state, setState, children }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; children: React.ReactNode }) {
   const p = currentParticipant(state)!;
   const stage = activeStage(state);
@@ -2074,6 +2142,23 @@ function buildText(state: WorkshopState) {
 export default function WorkspaceWorkshopApp() {
   const { state, setState, updateStage } = useWorkshopState();
   const participant = currentParticipant(state);
+  const [workshopStarted, setWorkshopStarted] = useState(false);
+  useEffect(() => {
+    if (!participant) {
+      setWorkshopStarted(false);
+      return;
+    }
+    setWorkshopStarted(sessionStorage.getItem(workshopStartedKey(participant.id)) === "true");
+  }, [participant?.id]);
+  const startWorkshop = () => {
+    if (!participant) return;
+    sessionStorage.setItem(workshopStartedKey(participant.id), "true");
+    setWorkshopStarted(true);
+    setState((current) => participant.status === "facilitador"
+      ? ({ ...current, activeView: "room", activeStageId: "etapa-1", activeActivity: "fluxo", viewingStageId: "", viewingActivity: "" })
+      : ({ ...current, activeView: "room", viewingStageId: "etapa-1", viewingActivity: "fluxo" }));
+  };
   if (!participant) return <ActionModalProvider><EntryScreen setState={setState} /></ActionModalProvider>;
+  if (!workshopStarted) return <ActionModalProvider><WorkshopOpening state={state} setState={setState} onStart={startWorkshop} /></ActionModalProvider>;
   return <ActionModalProvider><AppShell state={state} setState={setState}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
 }
