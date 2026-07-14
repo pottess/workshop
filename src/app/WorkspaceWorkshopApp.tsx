@@ -745,8 +745,8 @@ async function loadSupabaseState(): Promise<SupabaseSnapshot | null> {
   const config = supabaseConfig();
   if (!config) return null;
   try {
-    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state,updated_at", limit: "1" });
-    const response = await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?${params.toString()}`, { headers: supabaseHeaders(config.key) });
+    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state,updated_at", limit: "1", _: String(Date.now()) });
+    const response = await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?${params.toString()}`, { headers: supabaseHeaders(config.key), cache: "no-store" });
     if (!response.ok) return null;
     const rows = await response.json() as Array<{ state?: WorkshopState; updated_at?: string }>;
     return rows[0]?.state ? { state: rows[0].state, updatedAt: rows[0].updated_at ?? "" } : null;
@@ -785,11 +785,13 @@ async function syncSupabase(state: WorkshopState) {
   if (!config) return "";
   const updatedAt = now();
   try {
-    await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?on_conflict=id`, {
+    const response = await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?on_conflict=id`, {
       method: "POST",
       headers: supabaseHeaders(config.key, "resolution=merge-duplicates,return=minimal"),
       body: JSON.stringify([{ id: config.workshopId, state: sharedWorkshopState(state), updated_at: updatedAt }]),
+      cache: "no-store",
     });
+    if (!response.ok) return "";
     return updatedAt;
   } catch {
     // Mantém o fallback local sem interromper a facilitação.
@@ -887,6 +889,7 @@ function useWorkshopState() {
   const lastRemoteUpdatedAt = useRef("");
   const lastPersistedSharedState = useRef("");
   const applyingRemoteState = useRef(false);
+  const writeAfterRemoteApply = useRef(false);
   const [state, setState] = useState<WorkshopState>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -905,6 +908,7 @@ function useWorkshopState() {
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
         lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
         applyingRemoteState.current = true;
+        writeAfterRemoteApply.current = false;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
       }
     }).finally(() => {
@@ -918,16 +922,18 @@ function useWorkshopState() {
     const signature = sharedWorkshopSignature(state);
     if (applyingRemoteState.current && signature === lastPersistedSharedState.current) {
       applyingRemoteState.current = false;
+      writeAfterRemoteApply.current = false;
       return;
     }
     applyingRemoteState.current = false;
-    if (signature === lastPersistedSharedState.current) return;
+    if (signature === lastPersistedSharedState.current && !writeAfterRemoteApply.current) return;
     const timeout = window.setTimeout(() => void syncSupabase(state).then((updatedAt) => {
       if (updatedAt) {
         lastRemoteUpdatedAt.current = updatedAt;
         lastPersistedSharedState.current = signature;
+        writeAfterRemoteApply.current = false;
       }
-    }), 650);
+    }), 250);
     return () => window.clearTimeout(timeout);
   }, [state, supabaseHydrated]);
   useEffect(() => {
@@ -943,12 +949,14 @@ function useWorkshopState() {
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
         lastPersistedSharedState.current = signature;
         applyingRemoteState.current = true;
+        writeAfterRemoteApply.current = false;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
       });
-    }, 3500);
+    }, 1200);
     return () => window.clearInterval(interval);
   }, [supabaseHydrated]);
   const updateStage = (stageId: string, fn: (stage: Stage) => Stage) => {
+    writeAfterRemoteApply.current = true;
     setState((current) => ({ ...current, stages: current.stages.map((s) => (s.id === stageId ? normalizeStage(fn(s)) : s)) }));
   };
   return { state, setState, updateStage };
