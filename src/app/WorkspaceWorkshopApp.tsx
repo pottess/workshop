@@ -740,6 +740,7 @@ function supabaseHeaders(key: string, prefer?: string) {
 }
 
 type SupabaseSnapshot = { state: WorkshopState; updatedAt: string };
+const stageArrayKeys = ["flow", "taxImpacts", "taxObligations", "taxNeeds", "kpiItems", "pains", "rules", "needs", "openQuestions", "hypotheses", "offenders", "plans"] as const;
 
 async function loadSupabaseState(): Promise<SupabaseSnapshot | null> {
   const config = supabaseConfig();
@@ -761,6 +762,70 @@ function sharedWorkshopState(state: WorkshopState): WorkshopState {
 
 function sharedWorkshopSignature(state: WorkshopState) {
   return JSON.stringify(sharedWorkshopState(hydrateWorkshopState({ ...initialState(), ...state, persistence: "supabase" })));
+}
+
+function sameValue(a: unknown, b: unknown) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function mergeById<T extends { id: string }>(baseItems: T[] = [], remoteItems: T[] = [], localItems: T[] = []) {
+  const localChanged = !sameValue(baseItems, localItems);
+  const map = new Map<string, T>();
+  remoteItems.forEach((item) => map.set(item.id, item));
+  if (localChanged) {
+    const localIds = new Set(localItems.map((item) => item.id));
+    baseItems.forEach((item) => {
+      if (!localIds.has(item.id)) map.delete(item.id);
+    });
+  }
+  localItems.forEach((item) => {
+    const base = baseItems.find((baseItem) => baseItem.id === item.id);
+    if (!base || !sameValue(base, item) || !map.has(item.id)) map.set(item.id, item);
+  });
+  return localChanged ? Array.from(map.values()) : remoteItems;
+}
+
+function chooseLocalIfChanged<T>(baseValue: T, remoteValue: T, localValue: T) {
+  return sameValue(baseValue, localValue) ? remoteValue : localValue;
+}
+
+function mergeStageState(baseStage: Stage | undefined, remoteStage: Stage | undefined, localStage: Stage): Stage {
+  const base = withStageDefaults(baseStage ?? localStage);
+  const remote = withStageDefaults(remoteStage ?? localStage);
+  const local = withStageDefaults(localStage);
+  const merged = {
+    ...remote,
+    status: chooseLocalIfChanged(base.status, remote.status, local.status),
+    taxImpact: chooseLocalIfChanged(base.taxImpact, remote.taxImpact, local.taxImpact),
+    kdd: chooseLocalIfChanged(base.kdd, remote.kdd, local.kdd),
+    pending: mergeById(base.pending.map((value, index) => ({ id: `${index}-${value}`, value })), remote.pending.map((value, index) => ({ id: `${index}-${value}`, value })), local.pending.map((value, index) => ({ id: `${index}-${value}`, value }))).map((item) => item.value),
+  } as Stage;
+  stageArrayKeys.forEach((key) => {
+    (merged as unknown as Record<string, unknown>)[key] = mergeById(
+      ((base as unknown as Record<string, Array<{ id: string }>>)[key] ?? []),
+      ((remote as unknown as Record<string, Array<{ id: string }>>)[key] ?? []),
+      ((local as unknown as Record<string, Array<{ id: string }>>)[key] ?? []),
+    );
+  });
+  return merged;
+}
+
+function mergeWorkshopStates(baseState: WorkshopState | null, remoteState: WorkshopState | null, localState: WorkshopState): WorkshopState {
+  const base = hydrateWorkshopState({ ...initialState(), ...(baseState ?? remoteState ?? localState), persistence: "supabase" });
+  const remote = hydrateWorkshopState({ ...initialState(), ...(remoteState ?? baseState ?? localState), persistence: "supabase" });
+  const local = hydrateWorkshopState({ ...initialState(), ...localState, persistence: "supabase" });
+  return {
+    ...remote,
+    workspacePhase: chooseLocalIfChanged(base.workspacePhase, remote.workspacePhase, local.workspacePhase),
+    activeStageId: chooseLocalIfChanged(base.activeStageId, remote.activeStageId, local.activeStageId),
+    activeActivity: chooseLocalIfChanged(base.activeActivity, remote.activeActivity, local.activeActivity),
+    roundStatus: chooseLocalIfChanged(base.roundStatus, remote.roundStatus, local.roundStatus),
+    roundMinutes: chooseLocalIfChanged(base.roundMinutes, remote.roundMinutes, local.roundMinutes),
+    participants: mergeById(base.participants, remote.participants, local.participants),
+    contributions: mergeById(base.contributions, remote.contributions, local.contributions),
+    stages: local.stages.map((stage) => mergeStageState(base.stages.find((item) => item.id === stage.id), remote.stages.find((item) => item.id === stage.id), stage)),
+    persistence: "supabase",
+  };
 }
 
 function applyRemoteWorkshopState(current: WorkshopState, remote: WorkshopState): WorkshopState {
@@ -888,10 +953,12 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
 function useWorkshopState() {
   const lastRemoteUpdatedAt = useRef("");
   const lastPersistedSharedState = useRef("");
+  const lastRemoteState = useRef<WorkshopState | null>(null);
   const applyingRemoteState = useRef(false);
   const writeAfterRemoteApply = useRef(false);
   const [state, setState] = useState<WorkshopState>(() => {
     try {
+      if (supabaseEnabled()) return initialState();
       const saved = localStorage.getItem(STORAGE_KEY);
       return saved ? hydrateWorkshopState({ ...initialState(), ...JSON.parse(saved) }) : initialState();
     } catch {
@@ -907,6 +974,7 @@ function useWorkshopState() {
       if (remoteSnapshot) {
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
         lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
+        lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
         applyingRemoteState.current = true;
         writeAfterRemoteApply.current = false;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
@@ -917,7 +985,7 @@ function useWorkshopState() {
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!supabaseEnabled()) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (!supabaseEnabled() || !supabaseHydrated) return;
     const signature = sharedWorkshopSignature(state);
     if (applyingRemoteState.current && signature === lastPersistedSharedState.current) {
@@ -927,11 +995,17 @@ function useWorkshopState() {
     }
     applyingRemoteState.current = false;
     if (signature === lastPersistedSharedState.current && !writeAfterRemoteApply.current) return;
-    const timeout = window.setTimeout(() => void syncSupabase(state).then((updatedAt) => {
+    const timeout = window.setTimeout(() => void loadSupabaseState().then((remoteSnapshot) => {
+      const merged = mergeWorkshopStates(lastRemoteState.current, remoteSnapshot?.state ?? null, state);
+      return syncSupabase(merged).then((updatedAt) => ({ updatedAt, merged }));
+    }).then(({ updatedAt, merged }) => {
       if (updatedAt) {
         lastRemoteUpdatedAt.current = updatedAt;
-        lastPersistedSharedState.current = signature;
+        lastPersistedSharedState.current = sharedWorkshopSignature(merged);
+        lastRemoteState.current = merged;
         writeAfterRemoteApply.current = false;
+        applyingRemoteState.current = true;
+        setState((current) => applyRemoteWorkshopState(current, merged));
       }
     }), 250);
     return () => window.clearTimeout(timeout);
@@ -948,6 +1022,7 @@ function useWorkshopState() {
         }
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
         lastPersistedSharedState.current = signature;
+        lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
         applyingRemoteState.current = true;
         writeAfterRemoteApply.current = false;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
@@ -1392,14 +1467,13 @@ function ContextualContributionPanel({ state, setState, stage, updateStage }: { 
   const p = currentParticipant(state);
   if (!p) return null;
   const activity = visibleActivity(state);
-  const canCreateAfternoonItems = state.workspacePhase !== "validacao_manha" || p.status === "facilitador";
   const canAddPain = ["fluxo", "hipoteses"].includes(activity);
-  const canAddHypothesis = activity === "hipoteses" && canCreateAfternoonItems;
-  const canAddOffender = activity === "hipoteses" && canCreateAfternoonItems;
+  const canAddHypothesis = activity === "hipoteses";
+  const canAddOffender = activity === "hipoteses";
   const addPain = () => openModal({ title: "Adicionar dor", confirmLabel: "Adicionar", fields: [{ id: "text", label: "Texto da dor", multiline: true, required: true }], onSubmit: ({ text }) => addContribution(setState, state, { type: "dor", content: text, impact: "Médio" }) });
   const addHypothesis = () => openModal({ title: "Criar hipótese", message: "Use o formato: Se [ação], então [resultado], porque [evidência].", confirmLabel: "Criar", fields: [{ id: "text", label: "Hipótese", multiline: true, required: true }], onSubmit: ({ text }) => addContribution(setState, state, { type: "hipótese", content: text, impact: "Médio" }) });
   const addOffender = () => openModal({ title: "Adicionar ofensor", confirmLabel: "Adicionar", fields: [{ id: "text", label: "Ofensor identificado", multiline: true, required: true }], onSubmit: ({ text }) => { const offender: Offender = { id: id("offender"), stageId: stage.id, hypothesisId: "", type: "Processo", content: text, cause: "Causa provável registrada por participante", impact: "Médio", responsibleArea: p.area, status: "Sugerido", origin: "Workshop" }; updateStage(stage.id, (s) => ({ ...s, offenders: [offender, ...s.offenders] })); addContribution(setState, state, { type: "ofensor", content: text, impact: "Médio" }); } });
-  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Ações contextuais" subtitle={p.status === "facilitador" ? "Insumos rápidos da etapa." : "Registre insumos da discussão."} /><div className="mt-3 flex flex-wrap gap-2">{canAddPain && <SecondaryButton onClick={addPain}>Adicionar dor</SecondaryButton>}{canAddHypothesis && <SecondaryButton onClick={addHypothesis}><FlaskConical size={17} />Criar hipótese</SecondaryButton>}{canAddOffender && <SecondaryButton onClick={addOffender}>Adicionar ofensor</SecondaryButton>}{activity === "hipoteses" && !canCreateAfternoonItems && <Badge tone="bg-[#FFF4CC] text-[#6F5400]">Liberação à tarde</Badge>}{!canAddPain && !canAddHypothesis && !canAddOffender && <Badge tone="bg-[#F6F6F4] text-[#54504A]">Sem ação contextual</Badge>}</div></section>;
+  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Ações contextuais" subtitle={p.status === "facilitador" ? "Insumos rápidos da etapa." : "Registre insumos da discussão."} /><div className="mt-3 flex flex-wrap gap-2">{canAddPain && <SecondaryButton onClick={addPain}>Adicionar dor</SecondaryButton>}{canAddHypothesis && <SecondaryButton onClick={addHypothesis}><FlaskConical size={17} />Criar hipótese</SecondaryButton>}{canAddOffender && <SecondaryButton onClick={addOffender}>Adicionar ofensor</SecondaryButton>}{!canAddPain && !canAddHypothesis && !canAddOffender && <Badge tone="bg-[#F6F6F4] text-[#54504A]">Sem ação contextual</Badge>}</div></section>;
 }
 
 function Room({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
@@ -1886,7 +1960,6 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
   const openModal = useActionModal();
   const participant = currentParticipant(state);
   const [feedback, setFeedback] = useState("");
-  const canCreateAfternoonItems = state.workspacePhase !== "validacao_manha" || participant?.status === "facilitador";
   const sourceItems = allItems(stage);
   const kddText = stage.kdd.final || stage.kdd.draft;
   const sourceOptions = [{ label: "Sem item vinculado", value: "" }, ...sourceItems.map((item) => ({ label: (item.title || item.text).slice(0, 96), value: item.id }))];
@@ -1929,7 +2002,7 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
   });
   return (
     <div className="grid gap-4">
-      {state.workspacePhase === "validacao_manha" && <div className="rounded-md border border-[#F0DE9A] bg-[#FFFBEA] px-3 py-2 text-sm font-bold text-[#6F5400]">{participant?.status === "facilitador" ? "A fase oficial ainda é validação da manhã. Você pode preparar hipóteses se necessário." : "A criação de hipóteses e ofensores será feita na etapa da tarde."}</div>}
+      {state.workspacePhase === "validacao_manha" && <div className="rounded-md border border-[#F0DE9A] bg-[#FFFBEA] px-3 py-2 text-sm font-bold text-[#6F5400]">A fase oficial ainda é validação da manhã, mas hipóteses e ofensores já podem ser registrados.</div>}
       <section className="rounded-lg border-l-4 border-[#FFC629] bg-[#FFF9E3] p-4">
         <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#756F68]">KDD da etapa</p>
         <p className="mt-2 text-xl font-bold leading-8 text-[#2D2A26]">{kddText}</p>
@@ -1939,8 +2012,8 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
         </div>
       </section>
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={!canCreateAfternoonItems} onClick={createHypothesis} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-4 text-sm font-bold text-[#146B35] hover:border-[#146B35] disabled:cursor-not-allowed disabled:opacity-50"><FlaskConical size={17} />Criar hipótese</button>
-        <button type="button" disabled={!canCreateAfternoonItems} onClick={createOffenderFromModal} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#F3C7C7] bg-[#FFF1F1] px-4 text-sm font-bold text-[#8A1F1F] hover:border-[#8A1F1F] disabled:cursor-not-allowed disabled:opacity-50"><AlertTriangle size={17} />Criar ofensor</button>
+        <button type="button" onClick={createHypothesis} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-4 text-sm font-bold text-[#146B35] hover:border-[#146B35] disabled:cursor-not-allowed disabled:opacity-50"><FlaskConical size={17} />Criar hipótese</button>
+        <button type="button" onClick={createOffenderFromModal} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#F3C7C7] bg-[#FFF1F1] px-4 text-sm font-bold text-[#8A1F1F] hover:border-[#8A1F1F] disabled:cursor-not-allowed disabled:opacity-50"><AlertTriangle size={17} />Criar ofensor</button>
         {feedback && <span className="inline-flex h-10 items-center rounded-md bg-[#E1F5E8] px-3 text-sm font-bold text-[#146B35]">{feedback}</span>}
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1950,7 +2023,7 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
         </section>
         <section className="rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-3">
           <SectionTitle title="Ofensores" subtitle="Fatores que podem impedir o alcance do KDD" />
-          <div className="mt-3 grid gap-2">{stage.offenders.map((o) => <OffenderCard key={o.id} offender={o} />)}{!stage.offenders.length && <EmptyState text="Nenhum ofensor criado ainda." />}</div>
+          <div className="mt-3 grid gap-2">{stage.offenders.map((o) => <OffenderCard key={o.id} offender={o} state={state} updateStage={updateStage} />)}{!stage.offenders.length && <EmptyState text="Nenhum ofensor criado ainda." />}</div>
         </section>
       </div>
     </div>
@@ -1964,8 +2037,18 @@ function HypothesisCard({ h, state, updateStage }: { h: Hypothesis; state: Works
   const votes = h.votes ?? {};
   const liked = !!p && votes[p.id] > 0;
   const likes = Object.values(votes).filter((value) => value > 0).length;
-  const canDelete = p?.status === "facilitador" || h.createdBy === p?.name;
+  const canManage = p?.status === "facilitador" || h.createdBy === p?.name;
   const toggleLike = () => { if (!p) return; updateStage(h.stageId, (s) => ({ ...s, hypotheses: s.hypotheses.map((x) => x.id === h.id ? { ...x, votes: { ...(x.votes ?? {}), [p.id]: liked ? 0 : 1 } } : x) })); };
+  const editHypothesis = () => openModal({
+    title: "Editar hipótese",
+    confirmLabel: "Salvar",
+    fields: [
+      { id: "text", label: "Hipótese", value: h.text, multiline: true, required: true },
+      { id: "expectedResult", label: "Resultado esperado", value: h.expectedResult, required: true },
+      { id: "evidence", label: "Evidência", value: h.evidence, multiline: true, required: true },
+    ],
+    onSubmit: (values) => updateStage(h.stageId, (s) => ({ ...s, hypotheses: s.hypotheses.map((item) => item.id === h.id ? { ...item, text: values.text.trim(), expectedResult: values.expectedResult.trim(), evidence: values.evidence.trim() } : item) })),
+  });
   const deleteHypothesis = () => openModal({
     title: "Excluir hipótese?",
     message: h.text,
@@ -1973,10 +2056,30 @@ function HypothesisCard({ h, state, updateStage }: { h: Hypothesis; state: Works
     tone: "danger",
     onSubmit: () => updateStage(h.stageId, (s) => ({ ...s, hypotheses: s.hypotheses.filter((item) => item.id !== h.id), plans: s.plans.filter((plan) => plan.hypothesisId !== h.id) })),
   });
-  return <article className="rounded-md border border-[#BFE6CB] bg-white p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Badge tone={statusStyle[h.priorityStatus] ?? "bg-[#E1F5E8] text-[#146B35]"}>{h.priorityStatus}</Badge><div className="flex flex-wrap gap-2"><button type="button" onClick={toggleLike} className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs font-bold ${liked ? "border-[#146B35] bg-[#E1F5E8] text-[#146B35]" : "border-[#D8D8D8] bg-white text-[#54504A] hover:border-[#146B35]"}`}><ThumbsUp size={13} />Gostei {likes}</button>{canDelete && <button type="button" title="Excluir hipótese" onClick={deleteHypothesis} className="grid h-8 w-8 place-items-center rounded-md border border-[#F3C7C7] bg-white text-[#8A1F1F] hover:border-[#8A1F1F]"><Trash2 size={14} /></button>}</div></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{h.text}</p>{source && <p className="mt-2 line-clamp-2 rounded bg-[#F4FBF6] p-2 text-xs font-semibold leading-5 text-[#3F6B4E]">Vinculado: {source.title || source.text}</p>}<p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{h.createdBy || h.area || "Pré-work"} · {h.createdAt ? new Date(h.createdAt).toLocaleString("pt-BR") : "pré-work"}</p></article>;
+  return <article className="rounded-md border border-[#BFE6CB] bg-white p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Badge tone={statusStyle[h.priorityStatus] ?? "bg-[#E1F5E8] text-[#146B35]"}>{h.priorityStatus}</Badge><div className="flex flex-wrap gap-2"><button type="button" onClick={toggleLike} className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs font-bold ${liked ? "border-[#146B35] bg-[#E1F5E8] text-[#146B35]" : "border-[#D8D8D8] bg-white text-[#54504A] hover:border-[#146B35]"}`}><ThumbsUp size={13} />Gostei {likes}</button>{canManage && <button type="button" title="Editar hipótese" onClick={editHypothesis} className="grid h-8 w-8 place-items-center rounded-md border border-[#D8D8D8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"><Pencil size={14} /></button>}{canManage && <button type="button" title="Excluir hipótese" onClick={deleteHypothesis} className="grid h-8 w-8 place-items-center rounded-md border border-[#F3C7C7] bg-white text-[#8A1F1F] hover:border-[#8A1F1F]"><Trash2 size={14} /></button>}</div></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{h.text}</p>{source && <p className="mt-2 line-clamp-2 rounded bg-[#F4FBF6] p-2 text-xs font-semibold leading-5 text-[#3F6B4E]">Vinculado: {source.title || source.text}</p>}<p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{h.createdBy || h.area || "Pré-work"} · {h.createdAt ? new Date(h.createdAt).toLocaleString("pt-BR") : "pré-work"}</p></article>;
 }
-function OffenderCard({ offender }: { offender: Offender }) {
-  return <article className="rounded-md border border-[#F3C7C7] bg-white p-3"><div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#FFE1E1] text-[#8A1F1F]">{offender.status ?? "Sugerido"}</Badge><Badge tone="bg-white text-[#8A1F1F]">Impacto {offender.impact}</Badge></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{offender.content}</p><p className="mt-1 text-sm font-semibold leading-6 text-[#5B5650]">{offender.cause}</p><p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{offender.createdBy || offender.responsibleArea || "Pré-work"} · {offender.createdAt ? new Date(offender.createdAt).toLocaleString("pt-BR") : offender.origin || "pré-work"}</p></article>;
+function OffenderCard({ offender, state, updateStage }: { offender: Offender; state: WorkshopState; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+  const openModal = useActionModal();
+  const participant = currentParticipant(state);
+  const canManage = participant?.status === "facilitador" || offender.createdBy === participant?.name;
+  const editOffender = () => openModal({
+    title: "Editar ofensor",
+    confirmLabel: "Salvar",
+    fields: [
+      { id: "content", label: "Ofensor / risco", value: offender.content, required: true },
+      { id: "cause", label: "Como isso pode impedir o alcance do KDD", value: offender.cause, multiline: true, required: true },
+      { id: "impact", label: "Impacto", value: offender.impact, options: levels.map((level) => ({ label: level, value: level })) },
+    ],
+    onSubmit: (values) => updateStage(offender.stageId, (stage) => ({ ...stage, offenders: stage.offenders.map((item) => item.id === offender.id ? { ...item, content: values.content.trim(), cause: values.cause.trim(), impact: (values.impact || "Médio") as Level } : item) })),
+  });
+  const deleteOffender = () => openModal({
+    title: "Excluir ofensor?",
+    message: offender.content,
+    confirmLabel: "Excluir",
+    tone: "danger",
+    onSubmit: () => updateStage(offender.stageId, (stage) => ({ ...stage, offenders: stage.offenders.filter((item) => item.id !== offender.id) })),
+  });
+  return <article className="rounded-md border border-[#F3C7C7] bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#FFE1E1] text-[#8A1F1F]">{offender.status ?? "Sugerido"}</Badge><Badge tone="bg-white text-[#8A1F1F]">Impacto {offender.impact}</Badge></div>{canManage && <div className="flex gap-1"><button type="button" title="Editar ofensor" onClick={editOffender} className="grid h-8 w-8 place-items-center rounded-md border border-[#D8D8D8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"><Pencil size={14} /></button><button type="button" title="Excluir ofensor" onClick={deleteOffender} className="grid h-8 w-8 place-items-center rounded-md border border-[#F3C7C7] bg-white text-[#8A1F1F] hover:border-[#8A1F1F]"><Trash2 size={14} /></button></div>}</div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{offender.content}</p><p className="mt-1 text-sm font-semibold leading-6 text-[#5B5650]">{offender.cause}</p><p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{offender.createdBy || offender.responsibleArea || "Pré-work"} · {offender.createdAt ? new Date(offender.createdAt).toLocaleString("pt-BR") : offender.origin || "pré-work"}</p></article>;
 }
 function Prioritization({ state, updateStage }: { state: WorkshopState; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const stage = activeStage(state);
@@ -2303,6 +2406,24 @@ function HypothesesView({ state, setState, updateStage }: { state: WorkshopState
       setSelectedStageId(targetStage.id);
     },
   });
+  const createOffender = () => openModal({
+    title: "Novo ofensor",
+    message: `Etapa atual: ${selectedStage.name}`,
+    confirmLabel: "Salvar ofensor",
+    fields: [
+      { id: "stageId", label: "Etapa", value: selectedStage.id, options: state.stages.map((stage) => ({ label: `${stage.order}. ${stage.name}`, value: stage.id })) },
+      { id: "content", label: "Ofensor / risco", required: true },
+      { id: "cause", label: "Como isso pode impedir o alcance do KDD", multiline: true, required: true },
+      { id: "impact", label: "Impacto", value: "Médio", options: levels.map((level) => ({ label: level, value: level })) },
+    ],
+    onSubmit: (values) => {
+      const targetStage = state.stages.find((stage) => stage.id === values.stageId) ?? selectedStage;
+      const offender: Offender = { id: id("offender"), stageId: targetStage.id, hypothesisId: "", type: "Processo", content: values.content.trim(), cause: values.cause.trim(), impact: (values.impact || "Médio") as Level, responsibleArea: participant?.area ?? "Workshop", status: "Sugerido", origin: "Workshop", createdBy: participant?.name ?? "Workshop", createdAt: now() };
+      updateStage(targetStage.id, (stage) => ({ ...stage, offenders: [offender, ...stage.offenders] }));
+      addContribution(setState, state, { type: "ofensor", content: offender.content, impact: offender.impact });
+      setSelectedStageId(targetStage.id);
+    },
+  });
   return (
     <div className="grid gap-4">
       <section className="rounded-lg border border-[#D8D8D8] bg-white p-4 shadow-sm">
@@ -2311,6 +2432,7 @@ function HypothesesView({ state, setState, updateStage }: { state: WorkshopState
           <div className="flex flex-wrap gap-2">
             <Badge tone="bg-[#FFF4CC] text-[#6F5400]">{selectedStage.name}</Badge>
             <PrimaryButton disabled={!participant} onClick={createHypothesis}><Plus size={17} />Criar hipótese</PrimaryButton>
+            <SecondaryButton disabled={!participant} onClick={createOffender}><AlertTriangle size={17} />Criar ofensor</SecondaryButton>
           </div>
         </div>
       </section>
@@ -2322,16 +2444,28 @@ function HypothesesView({ state, setState, updateStage }: { state: WorkshopState
           </button>
         ))}
       </div>
-      <section className="rounded-lg border border-[#BFE6CB] bg-[#F4FBF6] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <SectionTitle title={selectedStage.name} subtitle="Hipóteses registradas nesta etapa." />
-          <Badge tone="bg-white text-[#54504A]">{selectedStage.hypotheses.length} hipóteses</Badge>
-        </div>
-        <div className="mt-3 grid gap-2">
-          {selectedStage.hypotheses.map((h) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}
-          {!selectedStage.hypotheses.length && <EmptyState text="Nenhuma hipótese criada para esta etapa. Clique em Criar hipótese para adicionar." />}
-        </div>
-      </section>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section className="rounded-lg border border-[#BFE6CB] bg-[#F4FBF6] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionTitle title={selectedStage.name} subtitle="Hipóteses registradas nesta etapa." />
+            <Badge tone="bg-white text-[#54504A]">{selectedStage.hypotheses.length} hipóteses</Badge>
+          </div>
+          <div className="mt-3 grid gap-2">
+            {selectedStage.hypotheses.map((h) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}
+            {!selectedStage.hypotheses.length && <EmptyState text="Nenhuma hipótese criada para esta etapa. Clique em Criar hipótese para adicionar." />}
+          </div>
+        </section>
+        <section className="rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionTitle title="Ofensores" subtitle="Riscos e barreiras registrados nesta etapa." />
+            <Badge tone="bg-white text-[#8A1F1F]">{selectedStage.offenders.length} ofensores</Badge>
+          </div>
+          <div className="mt-3 grid gap-2">
+            {selectedStage.offenders.map((offender) => <OffenderCard key={offender.id} offender={offender} state={state} updateStage={updateStage} />)}
+            {!selectedStage.offenders.length && <EmptyState text="Nenhum ofensor criado para esta etapa. Clique em Criar ofensor para adicionar." />}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
