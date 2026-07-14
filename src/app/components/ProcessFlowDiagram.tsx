@@ -283,12 +283,12 @@ export function ProcessFlowDiagram({ steps, origin, variant = "linear", diagramT
         <div>
           <h2 className="text-lg font-bold">Fluxo - {diagramTitle}</h2>
         </div>
-        {canEditFlow && <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setAddingStep(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><Plus size={17} />Adicionar passo</button>
-          <button type="button" disabled={!flowReady} onClick={() => onAddContribution("comentário", "Fluxo validado")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26] disabled:cursor-not-allowed disabled:opacity-50">
-            <CheckCircle2 size={17} />Fluxo validado
+        <div className="flex flex-wrap gap-2">
+          {canEditFlow && <button type="button" onClick={() => setAddingStep(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><Plus size={17} />Adicionar passo</button>}
+          <button type="button" disabled={!canEditFlow || !flowReady} onClick={() => onAddContribution("comentário", "Fluxo validado")} className={`inline-flex h-10 items-center justify-center gap-2 rounded-md border px-4 text-sm font-bold transition disabled:cursor-not-allowed ${flowReady ? "border-[#BFE6CB] bg-[#E1F5E8] text-[#146B35] hover:border-[#146B35]" : "border-[#D8D8D8] bg-white text-[#756F68] opacity-80"}`}>
+            <CheckCircle2 size={17} />{flowReady ? "Fluxo validado" : "Fluxo não validado"}
           </button>
-        </div>}
+        </div>
       </div>
       {feedback && <div className="mt-2 inline-flex min-h-8 items-center rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-3 text-sm font-bold text-[#146B35]">{feedback}</div>}
 
