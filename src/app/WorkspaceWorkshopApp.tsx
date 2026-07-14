@@ -64,6 +64,10 @@ interface WorkItem {
   dependencies?: string[];
   origin?: string;
   note?: string;
+  order?: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
   impact: Level;
   status: "em validação" | "em revisão" | "validado" | "ajustar" | "discordância" | "dúvida" | "pendência" | "fora de escopo" | "transformado em hipótese";
   comments: string[];
@@ -1565,11 +1569,26 @@ function FlowWork({ state, setState, stage, updateStage }: { state: WorkshopStat
       updateStage(stage.id, (current) => ({ ...current, rules: [related, ...current.rules] }));
       addFlowContribution("regra de negócio", text, step.id, step.impact);
     };
-    const addStep = (step: ProcessFlowStep) => updateStage(stage.id, (current) => ({ ...current, flow: [...current.flow, step as WorkItem] }));
-    const deleteStep = (stepId: string) => updateStage(stage.id, (current) => ({ ...current, flow: current.flow.filter((step) => step.id !== stepId) }));
+    const withFlowOrder = (items: WorkItem[]) => items.map((item, index) => ({ ...item, order: index + 1, updatedAt: now() }));
+    const addStep = (step: ProcessFlowStep, index: number) => updateStage(stage.id, (current) => {
+      if (current.flow.some((item) => item.id === step.id)) return current;
+      const next = [...current.flow];
+      const insertAt = Math.max(0, Math.min(index, next.length));
+      next.splice(insertAt, 0, step as WorkItem);
+      return { ...current, flow: withFlowOrder(next) };
+    });
+    const moveStep = (stepId: string, index: number) => updateStage(stage.id, (current) => {
+      const moving = current.flow.find((step) => step.id === stepId);
+      if (!moving) return current;
+      const next = current.flow.filter((step) => step.id !== stepId);
+      const insertAt = Math.max(0, Math.min(index, next.length));
+      next.splice(insertAt, 0, moving);
+      return { ...current, flow: withFlowOrder(next) };
+    });
+    const deleteStep = (stepId: string) => updateStage(stage.id, (current) => ({ ...current, flow: withFlowOrder(current.flow.filter((step) => step.id !== stepId)) }));
 
-    return <div className="grid gap-4"><ProcessFlowDiagram steps={stage.flow} origin={stage.origin} variant={stage.id === "etapa-2" ? "branching" : stage.id === "etapa-3" ? "parallel" : "linear"} diagramTitle={stage.name} canEditFlow={currentParticipant(state)?.status === "facilitador"} onUpdateStep={updateStep} onAddContribution={addFlowContribution} onAddRelatedPain={addRelatedPain} onAddRelatedRule={addRelatedRule} onCreateHypothesis={(step) => transformWorkItemToHypothesis(state, setState, stage, updateStage, "flow", step as WorkItem)} onAddStep={addStep} onDeleteStep={deleteStep} /><StageInputSections state={state} setState={setState} stage={stage} updateStage={updateStage} /></div>;
-  }
+    return <div className="grid gap-4"><ProcessFlowDiagram steps={stage.flow} origin={stage.origin} variant={stage.id === "etapa-2" ? "branching" : stage.id === "etapa-3" ? "parallel" : "linear"} diagramTitle={stage.name} canEditFlow={currentParticipant(state)?.status === "facilitador"} onUpdateStep={updateStep} onAddContribution={addFlowContribution} onAddRelatedPain={addRelatedPain} onAddRelatedRule={addRelatedRule} onCreateHypothesis={(step) => transformWorkItemToHypothesis(state, setState, stage, updateStage, "flow", step as WorkItem)} onAddStep={addStep} onMoveStep={moveStep} onDeleteStep={deleteStep} /><StageInputSections state={state} setState={setState} stage={stage} updateStage={updateStage} /></div>;
+}
 
   return (
     <div className="grid gap-5">

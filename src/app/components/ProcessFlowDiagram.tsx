@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -39,6 +39,10 @@ export interface ProcessFlowStep {
   dependencies?: string[];
   origin?: string;
   note?: string;
+  order?: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
   impact: "Baixo" | "Médio" | "Alto";
   status: ProcessStepStatus;
   comments: string[];
@@ -55,9 +59,12 @@ interface ProcessFlowDiagramProps {
   onAddRelatedPain: (step: ProcessFlowStep, text: string) => void;
   onAddRelatedRule: (step: ProcessFlowStep, text: string) => void;
   onCreateHypothesis: (step: ProcessFlowStep) => void;
-  onAddStep: (step: ProcessFlowStep) => void;
+  onAddStep: (step: ProcessFlowStep, index: number) => void;
+  onMoveStep: (stepId: string, index: number) => void;
   onDeleteStep: (stepId: string) => void;
 }
+
+type FlowPositionMode = "start" | "end" | "before" | "after";
 
 function asList(value?: string | string[]) {
   if (!value) return [];
@@ -66,6 +73,35 @@ function asList(value?: string | string[]) {
 
 function listFromPrompt(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function createStepId() {
+  return `flow-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function displayStepName(step: ProcessFlowStep) {
+  return step.title ?? step.text;
+}
+
+function referenceOptions(steps: ProcessFlowStep[], movingStepId?: string) {
+  return steps.filter((step) => step.id !== movingStepId);
+}
+
+function targetIndexForPosition(steps: ProcessFlowStep[], mode: FlowPositionMode, referenceId: string, movingStepId?: string) {
+  const base = referenceOptions(steps, movingStepId);
+  if (mode === "start") return 0;
+  if (mode === "end" || !base.length) return base.length;
+  const referenceIndex = base.findIndex((step) => step.id === referenceId);
+  if (referenceIndex < 0) return base.length;
+  return mode === "before" ? referenceIndex : referenceIndex + 1;
+}
+
+function positionPreview(steps: ProcessFlowStep[], mode: FlowPositionMode, referenceId: string, movingStepId?: string) {
+  if (mode === "start") return "Este passo será inserido no início do fluxo.";
+  if (mode === "end") return "Este passo será inserido no final do fluxo.";
+  const reference = referenceOptions(steps, movingStepId).find((step) => step.id === referenceId);
+  if (!reference) return "Selecione o passo de referência.";
+  return `Este passo será inserido ${mode === "before" ? "antes" : "depois"} de: ${displayStepName(reference)}`;
 }
 
 function ToolIcon({ label }: { label: string }) {
@@ -130,7 +166,7 @@ function EditableInfoPanel({
   );
 }
 
-function ProcessStepBox({ step, onSelect, wide = false }: { step: ProcessFlowStep; onSelect: (stepId: string) => void; wide?: boolean }) {
+function ProcessStepBox({ step, onSelect, wide = false, highlighted = false }: { step: ProcessFlowStep; onSelect: (stepId: string) => void; wide?: boolean; highlighted?: boolean }) {
   const roles = step.roles?.length ? step.roles : asList(step.area);
   const supportingItems = [...asList(step.tools), ...(step.systems ?? [])];
   return (
@@ -143,7 +179,7 @@ function ProcessStepBox({ step, onSelect, wide = false }: { step: ProcessFlowSte
           </div>
         ))}
       </div>
-      <div className={`border border-[#B8BCC2] bg-white shadow-sm transition group-hover:border-[#2D2A26] ${step.status === "validado" ? "ring-2 ring-[#79C58A]" : step.status === "pendência" || step.status === "dúvida" ? "ring-2 ring-[#E4B4B4]" : ""}`}>
+      <div className={`border border-[#B8BCC2] bg-white shadow-sm transition group-hover:border-[#2D2A26] ${highlighted ? "ring-4 ring-[#FFC629]" : step.status === "validado" ? "ring-2 ring-[#79C58A]" : step.status === "pendência" || step.status === "dúvida" ? "ring-2 ring-[#E4B4B4]" : ""}`}>
         <div className="flex min-h-9 items-center justify-center bg-[#2D2A26] px-2 py-1 text-center text-[11px] font-bold uppercase leading-4 text-white">{step.title ?? step.text}</div>
         <div className={`flex ${wide ? "min-h-[102px]" : "min-h-[118px]"} items-center justify-center px-3 py-3 text-center text-[14px] font-semibold leading-5 text-[#2D2A26]`}>{step.text}</div>
       </div>
@@ -162,16 +198,16 @@ function LineArrow({ x, y, w }: { x: number; y: number; w: number }) {
   return <div className="absolute h-0.5 bg-[#2D2A26]" style={{ left: x, top: y, width: w }} aria-hidden="true"><span className="absolute right-[-8px] top-[-5px] h-0 w-0 border-y-[6px] border-l-[9px] border-y-transparent border-l-[#2D2A26]" /></div>;
 }
 
-function BranchingFlow({ steps, onSelect }: { steps: ProcessFlowStep[]; onSelect: (stepId: string) => void }) {
+function BranchingFlow({ steps, onSelect, highlightedId }: { steps: ProcessFlowStep[]; onSelect: (stepId: string) => void; highlightedId?: string }) {
   const [direct, bees, review, lake, gpro, beesLink] = steps;
   return (
     <div className="relative h-[610px] w-[1500px]">
-      <div className="absolute left-[70px] top-[28px]">{direct && <ProcessStepBox step={direct} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[70px] top-[278px]">{bees && <ProcessStepBox step={bees} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[455px] top-[278px]">{review && <ProcessStepBox step={review} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[840px] top-[278px]">{lake && <ProcessStepBox step={lake} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[1220px] top-[138px]">{gpro && <ProcessStepBox step={gpro} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[1220px] top-[278px]">{beesLink && <ProcessStepBox step={beesLink} onSelect={onSelect} wide />}</div>
+      <div className="absolute left-[70px] top-[28px]">{direct && <ProcessStepBox step={direct} onSelect={onSelect} wide highlighted={highlightedId === direct.id} />}</div>
+      <div className="absolute left-[70px] top-[278px]">{bees && <ProcessStepBox step={bees} onSelect={onSelect} wide highlighted={highlightedId === bees.id} />}</div>
+      <div className="absolute left-[455px] top-[278px]">{review && <ProcessStepBox step={review} onSelect={onSelect} wide highlighted={highlightedId === review.id} />}</div>
+      <div className="absolute left-[840px] top-[278px]">{lake && <ProcessStepBox step={lake} onSelect={onSelect} wide highlighted={highlightedId === lake.id} />}</div>
+      <div className="absolute left-[1220px] top-[138px]">{gpro && <ProcessStepBox step={gpro} onSelect={onSelect} wide highlighted={highlightedId === gpro.id} />}</div>
+      <div className="absolute left-[1220px] top-[278px]">{beesLink && <ProcessStepBox step={beesLink} onSelect={onSelect} wide highlighted={highlightedId === beesLink.id} />}</div>
       <LineArrow x={330} y={405} w={125} />
       <LineArrow x={715} y={405} w={125} />
       <div className="absolute left-[1100px] top-[405px] h-0.5 w-[60px] bg-[#2D2A26]" aria-hidden="true" />
@@ -184,42 +220,62 @@ function BranchingFlow({ steps, onSelect }: { steps: ProcessFlowStep[]; onSelect
   );
 }
 
-function ParallelFlow({ steps, onSelect }: { steps: ProcessFlowStep[]; onSelect: (stepId: string) => void }) {
+function ParallelFlow({ steps, onSelect, highlightedId }: { steps: ProcessFlowStep[]; onSelect: (stepId: string) => void; highlightedId?: string }) {
   const [manual, automatic, send] = steps;
   return (
     <div className="relative h-[460px] w-[920px]">
-      <div className="absolute left-[70px] top-[28px]">{manual && <ProcessStepBox step={manual} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[70px] top-[208px]">{automatic && <ProcessStepBox step={automatic} onSelect={onSelect} wide />}</div>
-      <div className="absolute left-[500px] top-[208px]">{send && <ProcessStepBox step={send} onSelect={onSelect} wide />}</div>
+      <div className="absolute left-[70px] top-[28px]">{manual && <ProcessStepBox step={manual} onSelect={onSelect} wide highlighted={highlightedId === manual.id} />}</div>
+      <div className="absolute left-[70px] top-[208px]">{automatic && <ProcessStepBox step={automatic} onSelect={onSelect} wide highlighted={highlightedId === automatic.id} />}</div>
+      <div className="absolute left-[500px] top-[208px]">{send && <ProcessStepBox step={send} onSelect={onSelect} wide highlighted={highlightedId === send.id} />}</div>
       <LineArrow x={330} y={335} w={170} />
     </div>
   );
 }
 
-export function ProcessFlowDiagram({ steps, origin, variant = "linear", diagramTitle = "Fluxo", canEditFlow = false, onUpdateStep, onAddContribution, onAddRelatedPain, onAddRelatedRule, onCreateHypothesis, onAddStep, onDeleteStep }: ProcessFlowDiagramProps) {
-  const openModal = useActionModal();
+export function ProcessFlowDiagram({ steps, origin, variant = "linear", diagramTitle = "Fluxo", canEditFlow = false, onUpdateStep, onAddContribution, onAddRelatedPain, onAddRelatedRule, onCreateHypothesis, onAddStep, onMoveStep, onDeleteStep }: ProcessFlowDiagramProps) {
   const [selectedId, setSelectedId] = useState("");
+  const [addingStep, setAddingStep] = useState(false);
+  const [movingStep, setMovingStep] = useState<ProcessFlowStep | null>(null);
+  const [highlightedId, setHighlightedId] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const selectedStep = steps.find((step) => step.id === selectedId);
   const flowReady = steps.every((step) => step.status === "validado" || step.status === "pendência");
-  const isBranching = variant === "branching";
-  const isParallel = variant === "parallel";
+  const isBranching = variant === "branching" && steps.length === 6;
+  const isParallel = variant === "parallel" && steps.length === 3;
   const linearWidth = Math.max(steps.length * 264 + Math.max(steps.length - 1, 0) * 16, 820);
-  const addStep = () => openModal({
-    title: "Adicionar passo ao fluxo",
-    confirmLabel: "Adicionar passo",
-    fields: [
-      { id: "title", label: "Título do passo", required: true },
-      { id: "text", label: "Descrição", multiline: true, required: true },
-      { id: "roles", label: "Papéis envolvidos", placeholder: "Separar por vírgula" },
-      { id: "tools", label: "Ferramentas", placeholder: "Separar por vírgula" },
-      { id: "systems", label: "Sistemas", placeholder: "Separar por vírgula" },
-    ],
-    onSubmit: ({ title, text, roles, tools, systems }) => {
-      const step: ProcessFlowStep = { id: `flow-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, title: title.trim(), text: text.trim(), area: roles.trim() || "Workshop", roles: listFromPrompt(roles), tools: listFromPrompt(tools), systems: listFromPrompt(systems), origin: "Workshop", impact: "Médio", status: "em validação", comments: [] };
-      onAddStep(step);
-      onAddContribution("ajuste de fluxo", `Novo passo adicionado: ${step.title}`, step.id, step.impact);
-    },
-  });
+
+  useEffect(() => {
+    if (!highlightedId) return;
+    const timeout = window.setTimeout(() => setHighlightedId(""), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [highlightedId]);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timeout = window.setTimeout(() => setFeedback(""), 3200);
+    return () => window.clearTimeout(timeout);
+  }, [feedback]);
+
+  useEffect(() => {
+    if (!highlightedId) return;
+    stepRefs.current[highlightedId]?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [highlightedId, steps.length]);
+
+  const saveAddedStep = (step: ProcessFlowStep, index: number) => {
+    onAddStep(step, index);
+    onAddContribution("ajuste de fluxo", `Novo passo adicionado: ${displayStepName(step)}`, step.id, step.impact);
+    setHighlightedId(step.id);
+    setFeedback("Passo adicionado ao fluxo");
+  };
+
+  const saveMovedStep = (step: ProcessFlowStep, index: number) => {
+    onMoveStep(step.id, index);
+    onAddContribution("ajuste de fluxo", `Passo reposicionado: ${displayStepName(step)}`, step.id, step.impact);
+    setHighlightedId(step.id);
+    setFeedback("Passo reposicionado no fluxo");
+  };
 
   return (
     <section className="min-w-0 max-w-full">
@@ -228,25 +284,26 @@ export function ProcessFlowDiagram({ steps, origin, variant = "linear", diagramT
           <h2 className="text-lg font-bold">Fluxo - {diagramTitle}</h2>
         </div>
         {canEditFlow && <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={addStep} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><Plus size={17} />Adicionar passo</button>
+          <button type="button" onClick={() => setAddingStep(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><Plus size={17} />Adicionar passo</button>
           <button type="button" disabled={!flowReady} onClick={() => onAddContribution("comentário", "Fluxo validado")} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26] disabled:cursor-not-allowed disabled:opacity-50">
             <CheckCircle2 size={17} />Fluxo validado
           </button>
         </div>}
       </div>
+      {feedback && <div className="mt-2 inline-flex min-h-8 items-center rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-3 text-sm font-bold text-[#146B35]">{feedback}</div>}
 
-      <div className="mt-2 w-full max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-[#8D9299] bg-[#F3F4F4] p-2 shadow-sm">
+      <div ref={scrollRef} className="mt-2 w-full max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-[#8D9299] bg-[#F3F4F4] p-2 shadow-sm">
         <div className={`${isBranching ? "w-[1500px]" : isParallel ? "w-[920px]" : ""} max-w-none`} style={!isBranching && !isParallel ? { width: linearWidth } : undefined}>
           {isBranching ? (
-            <BranchingFlow steps={steps} onSelect={setSelectedId} />
+            <BranchingFlow steps={steps} onSelect={setSelectedId} highlightedId={highlightedId} />
           ) : isParallel ? (
-            <ParallelFlow steps={steps} onSelect={setSelectedId} />
+            <ParallelFlow steps={steps} onSelect={setSelectedId} highlightedId={highlightedId} />
           ) : (
           <div className="flex items-start">
             {steps.map((step, index) => {
               return (
-                <div key={step.id} className="flex items-center">
-                  <ProcessStepBox step={step} onSelect={setSelectedId} />
+                <div key={step.id} ref={(element) => { stepRefs.current[step.id] = element; }} className="flex items-center">
+                  <ProcessStepBox step={step} onSelect={setSelectedId} highlighted={highlightedId === step.id} />
                   {index < steps.length - 1 && <Arrow className="mx-1 mt-[116px]" />}
                 </div>
               );
@@ -256,12 +313,129 @@ export function ProcessFlowDiagram({ steps, origin, variant = "linear", diagramT
         </div>
       </div>
 
-      {selectedStep && <StepModal step={selectedStep} origin={origin} canEditFlow={canEditFlow} onClose={() => setSelectedId("")} onUpdateStep={onUpdateStep} onAddContribution={onAddContribution} onAddRelatedPain={onAddRelatedPain} onAddRelatedRule={onAddRelatedRule} onCreateHypothesis={onCreateHypothesis} onAddStep={onAddStep} onDeleteStep={onDeleteStep} />}
+      {addingStep && <FlowStepPositionModal mode="add" steps={steps} onClose={() => setAddingStep(false)} onSaveAdd={saveAddedStep} />}
+      {movingStep && <FlowStepPositionModal mode="move" steps={steps} movingStep={movingStep} onClose={() => setMovingStep(null)} onSaveMove={saveMovedStep} />}
+      {selectedStep && <StepModal step={selectedStep} origin={origin} steps={steps} canEditFlow={canEditFlow} onClose={() => setSelectedId("")} onUpdateStep={onUpdateStep} onAddContribution={onAddContribution} onAddRelatedPain={onAddRelatedPain} onAddRelatedRule={onAddRelatedRule} onCreateHypothesis={onCreateHypothesis} onAddStep={onAddStep} onMoveStep={onMoveStep} onDeleteStep={onDeleteStep} onRequestMove={setMovingStep} />}
     </section>
   );
 }
 
-function StepModal({ step, canEditFlow = false, onClose, onUpdateStep, onAddContribution, onAddRelatedPain, onAddRelatedRule, onDeleteStep }: ProcessFlowDiagramProps & { step: ProcessFlowStep; onClose: () => void }) {
+function FlowStepPositionModal({
+  mode,
+  steps,
+  movingStep,
+  onClose,
+  onSaveAdd,
+  onSaveMove,
+}: {
+  mode: "add" | "move";
+  steps: ProcessFlowStep[];
+  movingStep?: ProcessFlowStep;
+  onClose: () => void;
+  onSaveAdd?: (step: ProcessFlowStep, index: number) => void;
+  onSaveMove?: (step: ProcessFlowStep, index: number) => void;
+}) {
+  const selectableSteps = referenceOptions(steps, movingStep?.id);
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [roles, setRoles] = useState("");
+  const [resources, setResources] = useState("");
+  const [positionMode, setPositionMode] = useState<FlowPositionMode>(mode === "add" ? "end" : "after");
+  const [referenceId, setReferenceId] = useState(selectableSteps[0]?.id ?? "");
+  const needsReference = positionMode === "before" || positionMode === "after";
+  const hasReference = !needsReference || !!referenceId;
+  const canSave = mode === "move" ? hasReference : !!title.trim() && !!text.trim() && hasReference;
+  const preview = positionPreview(steps, positionMode, referenceId, movingStep?.id);
+
+  useEffect(() => {
+    if (!needsReference || referenceId || !selectableSteps[0]) return;
+    setReferenceId(selectableSteps[0].id);
+  }, [needsReference, referenceId, selectableSteps]);
+
+  const save = () => {
+    if (!canSave) return;
+    const index = targetIndexForPosition(steps, positionMode, referenceId, movingStep?.id);
+    if (mode === "move" && movingStep && onSaveMove) {
+      onSaveMove(movingStep, index);
+      onClose();
+      return;
+    }
+    if (!onSaveAdd) return;
+    const roleList = listFromPrompt(roles);
+    const resourceList = listFromPrompt(resources);
+    const createdAt = new Date().toISOString();
+    onSaveAdd({
+      id: createStepId(),
+      title: title.trim(),
+      text: text.trim(),
+      area: roleList.join(", ") || "Workshop",
+      roles: roleList,
+      tools: resourceList,
+      systems: [],
+      origin: "Workshop",
+      impact: "Médio",
+      status: "em validação",
+      comments: [],
+      createdBy: "Facilitadora",
+      createdAt,
+      updatedAt: createdAt,
+    }, index);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+      <section className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-[#2D2A26]">{mode === "add" ? "Adicionar passo ao fluxo" : "Reposicionar passo no fluxo"}</h2>
+            {mode === "move" && movingStep && <p className="mt-1 text-sm font-semibold leading-6 text-[#5B5650]">{displayStepName(movingStep)}</p>}
+          </div>
+          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-md border border-[#D8D8D8] bg-white text-[#2D2A26] hover:border-[#2D2A26]" aria-label="Fechar"><X size={18} /></button>
+        </div>
+
+        {mode === "add" && (
+          <div className="mt-4 grid gap-3">
+            <label className="grid gap-1 text-sm font-bold text-[#2D2A26]"><span>Nome do passo</span><input autoFocus className="min-h-10 rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+            <label className="grid gap-1 text-sm font-bold text-[#2D2A26]"><span>Descrição</span><textarea className="min-h-28 resize-y rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal leading-6 outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" value={text} onChange={(event) => setText(event.target.value)} /></label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="grid gap-1 text-sm font-bold text-[#2D2A26]"><span>Papéis envolvidos</span><input className="min-h-10 rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" placeholder="Separar por vírgula" value={roles} onChange={(event) => setRoles(event.target.value)} /></label>
+              <label className="grid gap-1 text-sm font-bold text-[#2D2A26]"><span>Ferramentas e sistemas</span><input className="min-h-10 rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" placeholder="Separar por vírgula" value={resources} onChange={(event) => setResources(event.target.value)} /></label>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-3 rounded-lg bg-[#F6F6F4] p-3">
+          <label className="grid gap-1 text-sm font-bold text-[#2D2A26]">
+            <span>Posição no fluxo</span>
+            <select className="min-h-10 rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" value={positionMode} onChange={(event) => setPositionMode(event.target.value as FlowPositionMode)}>
+              <option value="start">No início do fluxo</option>
+              <option value="end">No final do fluxo</option>
+              <option value="before">Antes de um passo existente</option>
+              <option value="after">Depois de um passo existente</option>
+            </select>
+          </label>
+          {needsReference && (
+            <label className="grid gap-1 text-sm font-bold text-[#2D2A26]">
+              <span>Passo de referência</span>
+              <select className="min-h-10 rounded-md border border-[#D8D8D8] bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#FFC629] focus:ring-2 focus:ring-[#FFC629]/20" value={referenceId} onChange={(event) => setReferenceId(event.target.value)}>
+                {selectableSteps.map((step) => <option key={step.id} value={step.id}>{displayStepName(step)}</option>)}
+              </select>
+            </label>
+          )}
+          <div className="rounded-md border border-[#F3E2A1] bg-[#FFF9E3] px-3 py-2 text-sm font-bold leading-6 text-[#6F5400]">{preview}</div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center justify-center rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] hover:border-[#2D2A26]">Cancelar</button>
+          <button type="button" disabled={!canSave} onClick={save} className="inline-flex h-10 items-center justify-center rounded-md bg-[#FFC629] px-4 text-sm font-bold text-[#2D2A26] hover:bg-[#FFD65E] disabled:cursor-not-allowed disabled:opacity-50">{mode === "add" ? "Adicionar passo" : "Salvar posição"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StepModal({ step, canEditFlow = false, onClose, onUpdateStep, onAddContribution, onAddRelatedPain, onAddRelatedRule, onDeleteStep, onRequestMove }: ProcessFlowDiagramProps & { step: ProcessFlowStep; onClose: () => void; onRequestMove: (step: ProcessFlowStep) => void }) {
   const openModal = useActionModal();
   const roles = step.roles?.length ? step.roles : asList(step.area);
   const tools = asList(step.tools);
@@ -354,6 +528,7 @@ function StepModal({ step, canEditFlow = false, onClose, onUpdateStep, onAddCont
           <button type="button" onClick={addDoubt} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><HelpCircle size={17} />Adicionar dúvida</button>
           <button type="button" onClick={addRelatedPain} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]">Adicionar dor relacionada</button>
           <button type="button" onClick={addRelatedRule} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]">Adicionar regra de negócio</button>
+          {canEditFlow && <button type="button" title="Reposicionar passo" onClick={() => onRequestMove(step)} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#D8D8D8] bg-white px-4 text-sm font-bold text-[#2D2A26] transition hover:border-[#2D2A26]"><Pencil size={17} />Reposicionar</button>}
           {canEditFlow && <button type="button" onClick={deleteStep} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#F3C7C7] bg-white px-4 text-sm font-bold text-[#8A1F1F] transition hover:border-[#8A1F1F]"><Trash2 size={17} />Excluir passo</button>}
         </div>
       </section>
