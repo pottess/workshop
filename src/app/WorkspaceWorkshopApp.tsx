@@ -1575,15 +1575,15 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
         <button type="button" title={`Adicionar ${title.toLowerCase()}`} onClick={addItem} className={`grid h-8 w-8 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Plus size={16} /></button>
       </div>
       {feedback && <div className="mt-2 inline-flex min-h-7 items-center rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-2 text-xs font-bold text-[#146B35]">{feedback}</div>}
-      <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-2 grid auto-rows-auto items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
         {items.map((work) => (
-          <article key={work.id} className={`flex min-h-[94px] items-start justify-between gap-2 rounded-md border px-3 py-2 ${theme.card}`}>
+          <article key={work.id} className={`grid h-auto min-h-[94px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-md border px-3 py-2 ${theme.card}`}>
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap gap-1.5"><Badge>{work.status}</Badge>{group !== "openQuestions" && <Badge tone="bg-white text-[#54504A]">Impacto {work.impact}</Badge>}{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>
-              <p className="line-clamp-1 text-sm font-bold leading-5">{work.title || work.text}</p>
-              {work.title && <p className="mt-0.5 line-clamp-2 text-xs font-semibold leading-5 text-[#5B5650]">{work.text}</p>}
+              <p className="whitespace-normal break-words text-sm font-bold leading-5">{work.title || work.text}</p>
+              {work.title && <p className="mt-0.5 whitespace-normal break-words text-xs font-semibold leading-5 text-[#5B5650]">{work.text}</p>}
             </div>
-            {canManage && <div className="flex items-center gap-1">
+            {canManage && <div className="flex shrink-0 items-start gap-1">
               <button type="button" title={`Editar ${title.toLowerCase()}`} onClick={() => editItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Pencil size={14} /></button>
               <button type="button" title={`Excluir ${title.toLowerCase()}`} onClick={() => deleteItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#8A1F1F] hover:border-[#8A1F1F] ${theme.button}`}><Trash2 size={14} /></button>
             </div>}
