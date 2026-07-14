@@ -1051,6 +1051,9 @@ function nextPhaseActivity(phase: WorkshopPhase, activity: Activity) {
   const index = Math.max(0, list.indexOf(activity));
   return list[Math.min(index + 1, list.length - 1)] ?? activity;
 }
+function moveToHypothesesPhase(state: WorkshopState): WorkshopState {
+  return { ...state, workspacePhase: "hipoteses_tarde", activeStageId: "etapa-1", activeActivity: "hipoteses", viewingStageId: "", viewingActivity: "", activeView: "room" };
+}
 function previousValidationActivity(activity: Activity) {
   const index = activityIndex(activity);
   return validationActivities[Math.max(index - 1, 0)];
@@ -1327,6 +1330,7 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
     if (missing.length) return;
     updateStage(stage.id, (s) => ({ ...s, status: "validada" }));
     if (nextStage) setState((s) => ({ ...s, activeStageId: nextStage.id, activeActivity: phaseActivities(s.workspacePhase)[0] ?? "fluxo", activeView: "room" }));
+    else if (state.workspacePhase === "validacao_manha") setState(moveToHypothesesPhase);
   };
 
   return (
@@ -2209,7 +2213,15 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
     const currentIndex = list.indexOf(s.activeActivity);
     if (currentIndex >= 0 && currentIndex < list.length - 1) return { ...s, activeActivity: list[currentIndex + 1], activeView: "room" };
     const next = s.stages[Math.max(0, s.stages.findIndex((item) => item.id === s.activeStageId)) + 1];
-    return next ? { ...s, activeStageId: next.id, activeActivity: list[0] ?? "fluxo", activeView: "room" } : { ...s, activeView: "summary" };
+    if (next) return { ...s, activeStageId: next.id, activeActivity: list[0] ?? "fluxo", activeView: "room" };
+    if (s.workspacePhase === "validacao_manha") return moveToHypothesesPhase(s);
+    return { ...s, activeView: "summary" };
+  });
+  const advanceActivity = () => setState((s) => {
+    const list = phaseActivities(s.workspacePhase);
+    const currentIndex = list.indexOf(s.activeActivity);
+    if (s.workspacePhase === "validacao_manha" && currentIndex === list.length - 1 && stageIndex(s) === s.stages.length - 1) return moveToHypothesesPhase(s);
+    return { ...s, activeActivity: nextPhaseActivity(s.workspacePhase, s.activeActivity), activeView: "room" };
   });
   const changePhase = (phase: WorkshopPhase) => setState((s) => ({ ...s, workspacePhase: phase, activeActivity: phaseActivities(phase)[0] ?? s.activeActivity, activeView: phase === "resumo" ? "summary" : "room" }));
   const missing = validationMissing(stage);
@@ -2240,7 +2252,7 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
           <SecondaryButton disabled={missing.length > 0} onClick={markValidated}><CheckCircle2 size={17} />Marcar validado</SecondaryButton>
           <SecondaryButton onClick={() => updateStage(stage.id, (s) => ({ ...s, pending: ["Pendência marcada pela facilitação", ...s.pending] }))}><AlertTriangle size={17} />Marcar pendência</SecondaryButton>
           <PrimaryButton onClick={advanceNow}>Avançar agora</PrimaryButton>
-          <SecondaryButton onClick={() => setState((s) => ({ ...s, activeActivity: nextPhaseActivity(s.workspacePhase, s.activeActivity) }))}>Avançar atividade</SecondaryButton>
+          <SecondaryButton onClick={advanceActivity}>Avançar atividade</SecondaryButton>
           <SecondaryButton onClick={() => setState((s) => ({ ...s, activeView: "summary" }))}><Download size={17} />Gerar resumo</SecondaryButton>
         </div>
       </section>
