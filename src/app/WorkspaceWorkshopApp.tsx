@@ -248,9 +248,11 @@ interface WorkshopState {
   stages: Stage[];
   contributions: Contribution[];
   persistence: "localStorage" | "supabase";
+  datasetVersion: string;
 }
 
 const STORAGE_KEY = "workspace-workshop-acordos-collab-v1";
+const WORKSHOP_DATASET_VERSION = "2026-07-14-workshop-clean-prework";
 const areas = ["Comercial", "Financeiro", "Fiscal", "Produto", "Tecnologia", "Dados", "CSC", "Jurídico / Compliance", "Outra"];
 const levels: Level[] = ["Baixo", "Médio", "Alto"];
 const activities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses", "priorizacao", "plano", "resumo"];
@@ -319,7 +321,6 @@ const statusStyle: Record<string, string> = {
   Sugerida: "bg-[#EFE9FF] text-[#5A2FAE]",
   Sugerido: "bg-[#EFE9FF] text-[#5A2FAE]",
   "Não avaliado": "bg-[#FDE8E8] text-[#9B1C1C]",
-  "Aguardando definição em workshop": "bg-[#FDE8E8] text-[#9B1C1C]",
   ajustar: "bg-[#FFF0D6] text-[#8A4B00]",
   discordância: "bg-[#FDE8E8] text-[#9B1C1C]",
   dúvida: "bg-[#E7F0FF] text-[#184B9B]",
@@ -382,29 +383,6 @@ function hypothesis(stageId: string, sourceId: string, sourceText: string, area:
   };
 }
 
-function makeStage(order: number, name: string, objective: string, flowTexts: string[], pains: string[], rules: string[], needs: string[], kdd: string): Stage {
-  const stageId = `etapa-${order}`;
-  return {
-    id: stageId,
-    name,
-    order,
-    status: order <= 2 ? "em validação" : "aguardando",
-    objective,
-    flow: flowTexts.map((text, index) => item(`f${order}-${index + 1}`, text, index === 0 ? "Comercial" : "Área responsável")),
-    taxImpact: blankTax(),
-    kdd: { draft: kdd, final: "", suggestions: [], comments: [], status: "em revisão" },
-    pains: pains.map((text, index) => item(`d${order}-${index + 1}`, text, index === 0 ? "Comercial" : "Financeiro", "Alto", index === 0 ? "validado" : "em revisão")),
-    rules: rules.map((text, index) => item(`r${order}-${index + 1}`, text, "Governança", index === 0 ? "Alto" : "Médio", index === 0 ? "validado" : "em revisão")),
-    needs: needs.map((text, index) => item(`n${order}-${index + 1}`, text, index === 0 ? "Dados" : "Produto", "Alto")),
-    hypotheses: [],
-    offenders: [],
-    plans: [],
-    pending: [],
-    kpis: { status: "", message: "", items: [] },
-    openQuestions: [],
-  };
-}
-
 const stageOnePrework: Stage = {
   id: "etapa-1",
   name: "Desdobramento da verba",
@@ -421,15 +399,7 @@ const stageOnePrework: Stage = {
     preworkItem("e1-f4", "Repasse", "Repasse da divisão da verba para time Contábil separado entre NBZs e VBZs.", "PPM AC, Financeiro CSC", "Alto", { roles: ["PPM AC", "Financeiro CSC"] }),
     preworkItem("e1-f5", "Cadastro verba", "Consolidação e inserção manual da verba no portal VMV por NBZ e VBZ.", "VMV", "Alto", { systems: ["VMV"] }),
   ],
-  taxImpact: {
-    answer: "Não avaliado",
-    expectedImpact: "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Cora e Arquitetura durante o workshop.",
-    obligation: "",
-    existingPain: "",
-    validator: "Fiscal, SAP, GPRO, Cora e Arquitetura",
-    dependency: "Avaliação obrigatória em workshop",
-    status: "não avaliado",
-  },
+  taxImpact: { answer: "Não avaliado", expectedImpact: "", obligation: "", existingPain: "", validator: "", dependency: "", status: "não avaliado" },
   kdd: {
     draft: "O desdobramento de verba deve ser padronizado, auditável, com regras claras de divisão e aderente à complexidade dos acordos e alavancas.",
     final: "",
@@ -437,11 +407,7 @@ const stageOnePrework: Stage = {
     comments: [],
     status: "em validação",
   },
-  kpis: {
-    status: "Aguardando definição em workshop",
-    message: "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    items: [],
-  },
+  kpis: { status: "", message: "Não informado no pré-work.", items: [] },
   pains: [
     preworkItem("e1-d1", "Formatos inconsistentes", "Cada KAM usa um formato para gestão, gerando inconsistência e necessidade de separar manualmente verbas AC e Regional.", "Comercial / PPM", "Alto"),
     preworkItem("e1-d2", "Ajustes duplicados de sazonalidade e sobra de recurso", "Ajustes de sazonalidade e “sobra recurso” aparecem duplicados no processo.", "Comercial / Financeiro", "Alto"),
@@ -460,85 +426,11 @@ const stageOnePrework: Stage = {
     preworkItem("e1-n1", "Edição sistêmica controlada", "Permitir edição dentro de sistema, com controle de alavanca e trilha de auditoria.", "Produto / Tecnologia / Governança", "Alto"),
     preworkItem("e1-n2", "Suporte a acordos de trade e múltiplas metas", "Ter suporte nativo a acordos de trade e múltiplas metas.", "Produto / Comercial", "Alto"),
   ],
-  openQuestions: [
-    preworkItem("e1-q1", "Regra de divisão", "Como deve ser definida a regra de divisão entre AC, Regional, canal e cliente?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q2", "Campos obrigatórios", "Quais campos são obrigatórios para garantir rastreabilidade do desdobramento da verba?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q3", "Permissão de edição", "Quem deve ter permissão para editar a verba após o planejamento inicial?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q4", "Situações de edição", "Em quais situações a edição da verba deve ser permitida?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q5", "Sazonalidade e sobra de recurso", "Como registrar ajustes de sazonalidade e sobra de recurso sem duplicidade?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q6", "Tratamento NBZ/VBZ", "Como NBZ e VBZ devem ser tratados no processo futuro?", "Sugestão para validação em sala", "Médio"),
-    preworkItem("e1-q7", "Informações para áreas", "Quais informações precisam estar disponíveis para Financeiro, CSC e VMV?", "Sugestão para validação em sala", "Médio"),
-  ],
-  hypotheses: [
-    {
-      id: "e1-h1",
-      stageId: "etapa-1",
-      sourceId: "e1-d1",
-      text: "Se o desdobramento da verba for padronizado em um modelo único, então haverá menos retrabalho entre Comercial, Financeiro e CSC, porque os formatos inconsistentes e repasses manuais reduzem a rastreabilidade.",
-      expectedResult: "Menos retrabalho entre Comercial, Financeiro e CSC",
-      evidence: "Formatos inconsistentes e repasses manuais reduzem a rastreabilidade.",
-      area: "Comercial / Financeiro / CSC",
-      impactProcess: "Alto",
-      financialRisk: "Alto",
-      fiscalRisk: "Médio",
-      painFrequency: "Alto",
-      technicalDependency: "Médio",
-      effort: "Médio",
-      urgency: "Alto",
-      clarity: "Alto",
-      priorityStatus: "Sugerida",
-      votes: {},
-    },
-    {
-      id: "e1-h2",
-      stageId: "etapa-1",
-      sourceId: "e1-d4",
-      text: "Se a edição de verba for controlada em sistema com trilha de auditoria, então será possível reduzir ajustes paralelos e divergências, porque hoje não há controle sistêmico de alterações por alavanca.",
-      expectedResult: "Reduzir ajustes paralelos e divergências",
-      evidence: "Hoje não há controle sistêmico de alterações por alavanca.",
-      area: "Produto / Tecnologia / Governança",
-      impactProcess: "Alto",
-      financialRisk: "Alto",
-      fiscalRisk: "Médio",
-      painFrequency: "Alto",
-      technicalDependency: "Alto",
-      effort: "Médio",
-      urgency: "Alto",
-      clarity: "Alto",
-      priorityStatus: "Sugerida",
-      votes: {},
-    },
-    {
-      id: "e1-h3",
-      stageId: "etapa-1",
-      sourceId: "e1-d5",
-      text: "Se o processo suportar acordos de trade e múltiplas metas, então o desdobramento ficará mais aderente à complexidade real dos acordos, porque o modelo atual não cobre bem esse cenário.",
-      expectedResult: "Desdobramento mais aderente à complexidade real dos acordos",
-      evidence: "O modelo atual não cobre bem acordos de trade e múltiplas metas.",
-      area: "Produto / Comercial",
-      impactProcess: "Alto",
-      financialRisk: "Médio",
-      fiscalRisk: "Médio",
-      painFrequency: "Alto",
-      technicalDependency: "Alto",
-      effort: "Médio",
-      urgency: "Alto",
-      clarity: "Alto",
-      priorityStatus: "Sugerida",
-      votes: {},
-    },
-  ],
-  offenders: [
-    { id: "e1-o1", stageId: "etapa-1", hypothesisId: "", type: "Processo", content: "Formatos paralelos de gestão", cause: "Ausência de modelo único para desdobramento e gestão da verba.", impact: "Alto", responsibleArea: "Comercial / PPM", status: "Sugerido", origin: PREWORK_ORIGIN },
-    { id: "e1-o2", stageId: "etapa-1", hypothesisId: "", type: "Sistema / Dados", content: "Dependência de planilhas", cause: "Falta de suporte sistêmico para repasse e controle NBZ/VBZ.", impact: "Alto", responsibleArea: "Financeiro / CSC", status: "Sugerido", origin: PREWORK_ORIGIN },
-    { id: "e1-o3", stageId: "etapa-1", hypothesisId: "", type: "Governança", content: "Ausência de trilha de auditoria", cause: "Edição e controle de alavancas fora de sistema.", impact: "Alto", responsibleArea: "Produto / Tecnologia / Governança", status: "Sugerido", origin: PREWORK_ORIGIN },
-    { id: "e1-o4", stageId: "etapa-1", hypothesisId: "", type: "Regra de negócio / Sistema", content: "Baixo suporte à complexidade dos acordos", cause: "Processo atual não cobre bem acordos de trade e múltiplas metas.", impact: "Alto", responsibleArea: "Produto / Comercial", status: "Sugerido", origin: PREWORK_ORIGIN },
-  ],
+  openQuestions: [],
+  hypotheses: [],
+  offenders: [],
   plans: [],
-  pending: [
-    "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Cora e Arquitetura durante o workshop.",
-  ],
+  pending: [],
 };
 
 const stageTwoPrework: Stage = {
@@ -558,15 +450,7 @@ const stageTwoPrework: Stage = {
     preworkItem("e2-f5", "Envio para o GPRO", "Acordos são criados no GPRO com ‘autor bees’.", "GPRO", "Alto", { origin: PREWORK_STAGE_TWO_ORIGIN, systems: ["GPRO"], note: "Envio automático dos acordos para GPRO" }),
     preworkItem("e2-f6", "Envio Bees Link", "Envio dos acordos para o Bees Link, onde as redes têm visibilidade das alavancas.", "Bees Link", "Alto", { origin: PREWORK_STAGE_TWO_ORIGIN, systems: ["Bees Link"], note: "Envio automático dos acordos para Bees Link" }),
   ],
-  taxImpact: {
-    answer: "Não avaliado",
-    expectedImpact: "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Cora, Bees Link, Data Lake e Arquitetura durante o workshop.",
-    obligation: "",
-    existingPain: "",
-    validator: "Fiscal, SAP, GPRO, Cora, Bees Link, Data Lake e Arquitetura",
-    dependency: "Avaliação obrigatória em workshop",
-    status: "não avaliado",
-  },
+  taxImpact: { answer: "Não avaliado", expectedImpact: "", obligation: "", existingPain: "", validator: "", dependency: "", status: "não avaliado" },
   kdd: {
     draft: "O cadastro de acordos deve ser centralizado, simples, com edição controlada e suporte às diferentes alavancas e tipos de acordo.",
     final: "",
@@ -574,11 +458,7 @@ const stageTwoPrework: Stage = {
     comments: [],
     status: "em validação",
   },
-  kpis: {
-    status: "Aguardando definição em workshop",
-    message: "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    items: [],
-  },
+  kpis: { status: "", message: "Não informado no pré-work.", items: [] },
   pains: [
     preworkItem("e2-d1", "Falta de visibilidade de recursos e interfaces amigáveis", "Falta de visibilidade de recursos e interfaces amigáveis.", "Produto / Tecnologia / Comercial", "Alto", { origin: PREWORK_STAGE_TWO_ORIGIN }),
     preworkItem("e2-d2", "Dependência grande de Excel", "Dependência de Excel muito grande, com vários campos para preencher.", "Comercial / Dados / DI", "Alto", { origin: PREWORK_STAGE_TWO_ORIGIN }),
@@ -597,37 +477,11 @@ const stageTwoPrework: Stage = {
   needs: [
     preworkItem("e2-n1", "Módulo único de cadastro", "Criar módulo único de cadastro, com edição controlada e suporte a trade.", "Produto / Tecnologia / Comercial", "Alto", { origin: PREWORK_STAGE_TWO_ORIGIN }),
   ],
-  openQuestions: [
-    preworkItem("e2-q1", "Dados obrigatórios", "Quais dados são obrigatórios para cadastrar um acordo com qualidade?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q2", "Campos com erro", "Quais campos hoje geram mais erro ou retrabalho na planilha Bees?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q3", "Escopo GPRO", "O que precisa continuar sendo feito no GPRO e o que deveria migrar para um módulo único?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q4", "Permissão de edição", "Quem deve poder editar um acordo após o lançamento?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q5", "Situações de edição", "Em quais situações a edição pós-lançamento deve ser permitida?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q6", "Anexos e evidências", "Quais anexos ou evidências são necessários para acordos de trade?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q7", "Vínculo de acordos", "Como garantir vínculo entre acordos enviados pelas redes e acordos Ambev?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q8", "Farol de assinatura", "O farol de assinatura ainda é necessário? Se sim, qual papel ele deve cumprir?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q9", "Rastreabilidade de auditoria", "O que precisa ser rastreável para auditorias qualitativas?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-    preworkItem("e2-q10", "Integrações obrigatórias", "Quais integrações são obrigatórias entre Bees Link, Data Lake, GPRO e futura solução?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_TWO_ORIGIN }),
-  ],
-  hypotheses: [
-    { ...hypothesis("etapa-2", "e2-d2", "Dependência de Excel muito grande, com vários campos para preencher.", "Comercial / Dados / DI"), id: "e2-h1", text: "Se o cadastro de acordos for centralizado em um módulo único, então haverá menos erro e retrabalho, porque hoje o processo depende de planilhas, GPRO e Bees Link com múltiplas passagens manuais.", expectedResult: "Menos erro e retrabalho", evidence: "Processo depende de planilhas, GPRO e Bees Link com múltiplas passagens manuais.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-2", "e2-d3", "Sem edição pós-lançamento, especialmente relacionada a assinante.", "Comercial / Produto / Governança"), id: "e2-h2", text: "Se o cadastro permitir edição controlada com trilha de auditoria, então será possível reduzir bloqueios pós-lançamento sem perder governança, porque hoje não há flexibilidade suficiente para corrigir informações críticas como assinante.", expectedResult: "Reduzir bloqueios pós-lançamento sem perder governança", evidence: "Não há flexibilidade suficiente para corrigir informações críticas como assinante.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-2", "e2-d8", "Suporte parcial a trade. Não é possível anexar arquivos, gerando risco de perda de arquivos.", "Comercial / Produto / Tecnologia"), id: "e2-h3", text: "Se o módulo de cadastro suportar anexos e evidências estruturadas, então acordos de trade e auditorias qualitativas terão menor risco de perda de informação, porque hoje o suporte a arquivos é parcial.", expectedResult: "Menor risco de perda de informação", evidence: "O suporte a arquivos é parcial.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-2", "e2-f4", "Fluxo passa por Data Lake, Bees Link e GPRO.", "Dados / Tecnologia / Comercial"), id: "e2-h4", text: "Se houver integração clara entre Data Lake, Bees Link e GPRO, então a criação de acordos será mais rastreável, porque hoje parte do processo depende de envio automático e autoria “bees” no GPRO.", expectedResult: "Criação de acordos mais rastreável", evidence: "Parte do processo depende de envio automático e autoria “bees” no GPRO.", priorityStatus: "Sugerida" },
-  ],
-  offenders: [
-    { id: "e2-o1", stageId: "etapa-2", hypothesisId: "", type: "Dados / Processo", content: "Dependência de planilha", cause: "Cadastro depende de Excel com muitos campos e múltiplas pessoas manipulando informações.", impact: "Alto", responsibleArea: "Comercial / Dados / DI", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-    { id: "e2-o2", stageId: "etapa-2", hypothesisId: "", type: "Sistema", content: "Baixa usabilidade do GPRO", cause: "Interface pouco amigável e fluxo burocrático reduzem adoção do cadastro direto.", impact: "Alto", responsibleArea: "Produto / Tecnologia / Comercial", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-    { id: "e2-o3", stageId: "etapa-2", hypothesisId: "", type: "Governança / Sistema", content: "Falta de edição controlada", cause: "Sistema não permite ajustes pós-lançamento com trilha de auditoria.", impact: "Alto", responsibleArea: "Comercial / Produto / Governança", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-    { id: "e2-o4", stageId: "etapa-2", hypothesisId: "", type: "Regra de negócio / Sistema", content: "Suporte insuficiente a trade", cause: "Processo não permite anexar arquivos e estruturar evidências necessárias.", impact: "Alto", responsibleArea: "Comercial / Produto / Tecnologia", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-    { id: "e2-o5", stageId: "etapa-2", hypothesisId: "", type: "Governança / Auditoria", content: "Risco de perda de evidência", cause: "Ausência de estrutura adequada para guardar evidências qualitativas.", impact: "Alto", responsibleArea: "Comercial / Governança / Auditoria", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-    { id: "e2-o6", stageId: "etapa-2", hypothesisId: "", type: "Integração / Sistema", content: "Fragmentação entre GPRO, Bees Link e Data Lake", cause: "Fluxo passa por diferentes sistemas e cargas, com baixa visibilidade fim a fim.", impact: "Alto", responsibleArea: "Dados / Tecnologia / Comercial", status: "Sugerido", origin: PREWORK_STAGE_TWO_ORIGIN },
-  ],
+  openQuestions: [],
+  hypotheses: [],
+  offenders: [],
   plans: [],
-  pending: [
-    "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Cora, Bees Link, Data Lake e Arquitetura durante o workshop.",
-  ],
+  pending: [],
 };
 
 const stageThreePrework: Stage = {
@@ -644,15 +498,7 @@ const stageThreePrework: Stage = {
     preworkItem("e3-f2", "Apuração", "Apuração automática dos acordos via Bees Link.", "Time DI", "Alto", { origin: PREWORK_STAGE_THREE_ORIGIN, roles: ["Time DI"], systems: ["Bees Link"], note: "Apuração automática via Bees Link" }),
     preworkItem("e3-f3", "Envio Apuração", "Bees Link envia para o GPRO a apuração dos acordos para gerar pagamentos.", "Bees Link / GPRO", "Alto", { origin: PREWORK_STAGE_THREE_ORIGIN, systems: ["Bees Link", "GPRO"] }),
   ],
-  taxImpact: {
-    answer: "Não avaliado",
-    expectedImpact: "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Bees Link, Dados, Cora e Arquitetura durante o workshop.",
-    obligation: "",
-    existingPain: "",
-    validator: "Fiscal, SAP, GPRO, Bees Link, Dados, Cora e Arquitetura",
-    dependency: "Avaliação obrigatória em workshop",
-    status: "não avaliado",
-  },
+  taxImpact: { answer: "Não avaliado", expectedImpact: "", obligation: "", existingPain: "", validator: "", dependency: "", status: "não avaliado" },
   kdd: {
     draft: "A apuração de acordos deve ser padronizada, rastreável e confiável, com fontes oficiais e critérios claros por tipo de alavanca para definir quando será automática, manual ou híbrida, permitindo revisão controlada do resultado antes do avanço no fluxo.",
     final: "",
@@ -660,11 +506,7 @@ const stageThreePrework: Stage = {
     comments: [],
     status: "em validação",
   },
-  kpis: {
-    status: "Aguardando definição em workshop",
-    message: "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    items: [],
-  },
+  kpis: { status: "", message: "Não informado no pré-work.", items: [] },
   pains: [
     preworkItem("e3-d1", "Dependência de planilhas e consolidação manual", "Apuração ainda depende muito de planilhas e consolidação manual, principalmente para acordos cadastrados via GPRO ou para alavancas que não são totalmente automatizadas.", "Comercial / Dados / DI", "Alto", { origin: PREWORK_STAGE_THREE_ORIGIN }),
     preworkItem("e3-d2", "Baixa confiança na qualidade dos dados", "Baixa confiança na qualidade dos dados, o que faz com que nem todos os acordos sejam enviados ao Bees Link para acompanhamento pela rede. O KAM pode optar por não expor as metas porque não confia totalmente nos números apresentados.", "Comercial / Dados / Bees Link", "Alto", { origin: PREWORK_STAGE_THREE_ORIGIN }),
@@ -682,39 +524,11 @@ const stageThreePrework: Stage = {
   needs: [
     preworkItem("e3-n1", "Critérios claros para tipo de apuração", "Definir critérios claros para quando a apuração deve ser automática, manual ou híbrida, evitando que cada KAM opere de um jeito.", "Produto / Dados / Comercial / Governança", "Alto", { origin: PREWORK_STAGE_THREE_ORIGIN }),
   ],
-  openQuestions: [
-    preworkItem("e3-q1", "Tipos de apuração por alavanca", "Quais alavancas devem ter apuração automática, manual ou híbrida?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q2", "Fontes oficiais", "Quais fontes de dados devem ser consideradas oficiais para cada tipo de alavanca?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q3", "Tratamento de exceções", "Como tratar devoluções, pedidos cancelados e faturamento negativo no cálculo da apuração?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q4", "Revisão antes do GPRO", "Quem deve revisar a apuração antes do envio ao GPRO?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q5", "Exposição de metas", "Em quais situações o KAM pode optar por não expor metas no Bees Link?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q6", "Confiança nos dados", "Como aumentar a confiança nos dados apresentados para KAMs e redes?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q7", "Correção de valores", "Como corrigir valores de apuração quando vêm do Bees e não fazem sentido no GPRO?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q8", "Apuração reprovada", "O que deve acontecer quando uma apuração é reprovada?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q9", "Reenvio após ajuste", "A apuração reprovada deveria poder ser reenviada após ajuste?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-    preworkItem("e3-q10", "Evidências qualitativas", "Como estruturar evidências para alavancas qualitativas, trade e Yes/No?", "Sugestão para validação em sala", "Médio", { origin: PREWORK_STAGE_THREE_ORIGIN }),
-  ],
-  hypotheses: [
-    { ...hypothesis("etapa-3", "e3-d6", "Variação operacional entre KAMs.", "Comercial / Operação / Governança"), id: "e3-h1", text: "Se forem definidos critérios claros para apuração automática, manual e híbrida por tipo de alavanca, então haverá menos variação operacional entre KAMs, porque hoje cada um pode operar de forma diferente.", expectedResult: "Menos variação operacional entre KAMs", evidence: "Cada KAM pode operar de forma diferente.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-3", "e3-d2", "Baixa confiança na qualidade dos dados.", "Comercial / Dados / Bees Link"), id: "e3-h2", text: "Se houver fonte oficial e regra de cálculo padronizada para cada alavanca, então a confiança nos dados de apuração deve aumentar, porque hoje existem divergências e baixa confiança nos números apresentados.", expectedResult: "Aumentar confiança nos dados de apuração", evidence: "Existem divergências e baixa confiança nos números apresentados.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-3", "e3-d7", "Dificuldade de correção no GPRO.", "Produto / Tecnologia / GPRO / Bees Link"), id: "e3-h3", text: "Se o GPRO permitir revisão ou correção controlada de apurações vindas do Bees, então o risco operacional será reduzido, porque hoje valores inconsistentes não podem ser corrigidos diretamente no GPRO.", expectedResult: "Reduzir risco operacional", evidence: "Valores inconsistentes não podem ser corrigidos diretamente no GPRO.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-3", "e3-d5", "Alavancas qualitativas ainda dependem de validação manual.", "Comercial / Dados / Auditoria / Trade"), id: "e3-h4", text: "Se alavancas qualitativas, trade e Yes/No tiverem evidências estruturadas, então a apuração manual será mais rastreável, porque hoje essas validações dependem de KAM, GEO, rede, auditoria, imagem ou BI.", expectedResult: "Apuração manual mais rastreável", evidence: "Validações dependem de KAM, GEO, rede, auditoria, imagem ou BI.", priorityStatus: "Sugerida" },
-    { ...hypothesis("etapa-3", "e3-d8", "Apuração reprovada não pode ser reenviada.", "GPRO / Governança / Operação"), id: "e3-h5", text: "Se apurações reprovadas puderem ser reenviadas com ajuste e trilha de auditoria, então haverá menos bloqueio operacional após erro, porque hoje a reprovação impede reenvio.", expectedResult: "Menos bloqueio operacional após erro", evidence: "Hoje a reprovação impede reenvio.", priorityStatus: "Sugerida" },
-  ],
-  offenders: [
-    { id: "e3-o1", stageId: "etapa-3", hypothesisId: "", type: "Processo / Dados", content: "Dependência de planilhas", cause: "Acordos via GPRO e alavancas não automatizadas ainda dependem de consolidação manual.", impact: "Alto", responsibleArea: "Comercial / Dados / DI", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o2", stageId: "etapa-3", hypothesisId: "", type: "Dados / Governança", content: "Baixa confiança nos dados", cause: "Falta de critérios claros, fontes oficiais e consistência nos números apresentados.", impact: "Alto", responsibleArea: "Comercial / Dados / Bees Link", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o3", stageId: "etapa-3", hypothesisId: "", type: "Sistema / Integração", content: "Automação parcial", cause: "Nem todas as alavancas têm automação ponta a ponta e parte significativa do valor ainda é apurada manualmente.", impact: "Alto", responsibleArea: "Dados / DI / Produto / Tecnologia", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o4", stageId: "etapa-3", hypothesisId: "", type: "Regra de negócio / Dados", content: "Regra de cálculo inconsistente", cause: "Devoluções, faturamento negativo e exceções podem ser interpretados incorretamente.", impact: "Alto", responsibleArea: "Dados / Financeiro / Comercial", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o5", stageId: "etapa-3", hypothesisId: "", type: "Processo / Governança", content: "Validação manual de alavancas qualitativas", cause: "Trade, Yes/No e alavancas qualitativas dependem de evidências externas ou validações manuais.", impact: "Alto", responsibleArea: "Comercial / Dados / Auditoria / Trade", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o6", stageId: "etapa-3", hypothesisId: "", type: "Sistema / Operação", content: "Baixa capacidade de correção no GPRO", cause: "Apurações vindas do Bees não podem ser corrigidas diretamente no GPRO quando apresentam inconsistência.", impact: "Alto", responsibleArea: "Produto / Tecnologia / GPRO / Bees Link", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-    { id: "e3-o7", stageId: "etapa-3", hypothesisId: "", type: "Governança / Sistema", content: "Bloqueio após reprovação", cause: "Apuração reprovada não pode ser reenviada, mesmo quando há necessidade de ajuste.", impact: "Alto", responsibleArea: "GPRO / Governança / Operação", status: "Sugerido", origin: PREWORK_STAGE_THREE_ORIGIN },
-  ],
+  openQuestions: [],
+  hypotheses: [],
+  offenders: [],
   plans: [],
-  pending: [
-    "KPIs / Metas ainda não definidos no pré-work. Validar em workshop.",
-    "Impacto da Reforma Tributária ainda não avaliado para esta etapa. Validar com Fiscal, SAP, GPRO, Bees Link, Dados, Cora e Arquitetura durante o workshop.",
-  ],
+  pending: [],
 };
 
 const stageFourPrework: Stage = {
@@ -845,14 +659,33 @@ const stageSixPrework: Stage = {
   pending: [],
 };
 
+function cleanPreworkStage(stage: Stage): Stage {
+  const shouldKeepOpenQuestions = ["etapa-5", "etapa-6"].includes(stage.id);
+  return {
+    ...stage,
+    status: "aguardando",
+    taxImpact: blankTax(),
+    kpis: stage.kpis.items.length ? stage.kpis : { status: "", message: "Não informado no pré-work.", items: [] },
+    openQuestions: shouldKeepOpenQuestions ? stage.openQuestions : [],
+    hypotheses: [],
+    offenders: [],
+    plans: [],
+    pending: [],
+  };
+}
+
 const seedStages: Stage[] = [
-  stageOnePrework,
-  stageTwoPrework,
-  stageThreePrework,
-  stageFourPrework,
-  stageFivePrework,
-  stageSixPrework,
+  cleanPreworkStage(stageOnePrework),
+  cleanPreworkStage(stageTwoPrework),
+  cleanPreworkStage(stageThreePrework),
+  cleanPreworkStage(stageFourPrework),
+  cleanPreworkStage(stageFivePrework),
+  cleanPreworkStage(stageSixPrework),
 ];
+
+function seedStageById(stageId: string) {
+  return seedStages.find((stage) => stage.id === stageId);
+}
 
 const SUPABASE_SNAPSHOT_TABLE = "workshop_snapshots";
 const SUPABASE_WORKSHOP_ID = "workshop-acordos-2026-h2";
@@ -917,14 +750,11 @@ function initialState(): WorkshopState {
     roundMinutes: 15,
     highlightedItemId: "",
     currentParticipantId: "",
-    participants: [
-      { id: "p-fac", name: "Juliete", role: "Facilitadora", area: "Produto", workshopRole: "Facilitadora", status: "facilitador", createdAt: now() },
-      { id: "p1", name: "Maria", role: "KAM", area: "Comercial", workshopRole: "Visão comercial", status: "presente", createdAt: now() },
-      { id: "p2", name: "Rafael", role: "Especialista Fiscal", area: "Fiscal", workshopRole: "Validador Reforma Tributária", status: "presente", createdAt: now() },
-    ],
+    participants: [],
     stages: seedStages,
     contributions: [],
     persistence: supabaseEnabled() ? "supabase" : "localStorage",
+    datasetVersion: WORKSHOP_DATASET_VERSION,
   };
 }
 
@@ -945,6 +775,7 @@ function withStageDefaults(stage: Stage): Stage {
 }
 
 function hydrateWorkshopState(state: WorkshopState): WorkshopState {
+  if (state.datasetVersion !== WORKSHOP_DATASET_VERSION) return initialState();
   const hasCurrentStageOnePrework = state.stages.some((stage) => stage.id === "etapa-1" && stage.preworkVersion === PREWORK_STAGE_ONE_VERSION);
   const hasCurrentStageTwoPrework = state.stages.some((stage) => stage.id === "etapa-2" && stage.preworkVersion === PREWORK_STAGE_TWO_VERSION);
   const hasCurrentStageThreePrework = state.stages.some((stage) => stage.id === "etapa-3" && stage.preworkVersion === PREWORK_STAGE_THREE_VERSION);
@@ -952,26 +783,26 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
   const hasCurrentStageFivePrework = state.stages.some((stage) => stage.id === "etapa-5" && stage.preworkVersion === PREWORK_STAGE_FIVE_VERSION);
   const hasCurrentStageSixPrework = state.stages.some((stage) => stage.id === "etapa-6" && stage.preworkVersion === PREWORK_STAGE_SIX_VERSION);
   const stages = state.stages.map((stage) => {
-    if (stage.id === "etapa-1" && !hasCurrentStageOnePrework) return stageOnePrework;
-    if (stage.id === "etapa-2" && !hasCurrentStageTwoPrework) return stageTwoPrework;
-    if (stage.id === "etapa-3" && !hasCurrentStageThreePrework) return stageThreePrework;
-    if (stage.id === "etapa-4" && !hasCurrentStageFourPrework) return stageFourPrework;
-    if (stage.id === "etapa-5" && !hasCurrentStageFivePrework) return stageFivePrework;
-    if (stage.id === "etapa-6" && !hasCurrentStageSixPrework) return stageSixPrework;
+    if (stage.id === "etapa-1" && !hasCurrentStageOnePrework) return seedStageById("etapa-1") ?? stage;
+    if (stage.id === "etapa-2" && !hasCurrentStageTwoPrework) return seedStageById("etapa-2") ?? stage;
+    if (stage.id === "etapa-3" && !hasCurrentStageThreePrework) return seedStageById("etapa-3") ?? stage;
+    if (stage.id === "etapa-4" && !hasCurrentStageFourPrework) return seedStageById("etapa-4") ?? stage;
+    if (stage.id === "etapa-5" && !hasCurrentStageFivePrework) return seedStageById("etapa-5") ?? stage;
+    if (stage.id === "etapa-6" && !hasCurrentStageSixPrework) return seedStageById("etapa-6") ?? stage;
     return withStageDefaults(stage);
   });
   const hasStageOne = stages.some((stage) => stage.id === "etapa-1");
-  const withStageOne = hasStageOne ? stages : [stageOnePrework, ...stages];
+  const withStageOne = hasStageOne ? stages : [seedStageById("etapa-1") ?? stageOnePrework, ...stages];
   const hasStageTwo = withStageOne.some((stage) => stage.id === "etapa-2");
-  const withStageTwo = hasStageTwo ? withStageOne : [withStageOne[0], stageTwoPrework, ...withStageOne.slice(1)];
+  const withStageTwo = hasStageTwo ? withStageOne : [withStageOne[0], seedStageById("etapa-2") ?? stageTwoPrework, ...withStageOne.slice(1)];
   const hasStageThree = withStageTwo.some((stage) => stage.id === "etapa-3");
-  const withStageThree = hasStageThree ? withStageTwo : [withStageTwo[0], withStageTwo[1], stageThreePrework, ...withStageTwo.slice(2)];
+  const withStageThree = hasStageThree ? withStageTwo : [withStageTwo[0], withStageTwo[1], seedStageById("etapa-3") ?? stageThreePrework, ...withStageTwo.slice(2)];
   const hasStageFour = withStageThree.some((stage) => stage.id === "etapa-4");
-  const withStageFour = hasStageFour ? withStageThree : [withStageThree[0], withStageThree[1], withStageThree[2], stageFourPrework, ...withStageThree.slice(3)];
+  const withStageFour = hasStageFour ? withStageThree : [withStageThree[0], withStageThree[1], withStageThree[2], seedStageById("etapa-4") ?? stageFourPrework, ...withStageThree.slice(3)];
   const hasStageFive = withStageFour.some((stage) => stage.id === "etapa-5");
-  const withStageFive = hasStageFive ? withStageFour : [withStageFour[0], withStageFour[1], withStageFour[2], withStageFour[3], stageFivePrework, ...withStageFour.slice(4)];
+  const withStageFive = hasStageFive ? withStageFour : [withStageFour[0], withStageFour[1], withStageFour[2], withStageFour[3], seedStageById("etapa-5") ?? stageFivePrework, ...withStageFour.slice(4)];
   const hasStageSix = withStageFive.some((stage) => stage.id === "etapa-6");
-  const hydratedStages = hasStageSix ? withStageFive : [withStageFive[0], withStageFive[1], withStageFive[2], withStageFive[3], withStageFive[4], stageSixPrework, ...withStageFive.slice(5)];
+  const hydratedStages = hasStageSix ? withStageFive : [withStageFive[0], withStageFive[1], withStageFive[2], withStageFive[3], withStageFive[4], seedStageById("etapa-6") ?? stageSixPrework, ...withStageFive.slice(5)];
   const hasCurrentPrework = hasCurrentStageOnePrework && hasCurrentStageTwoPrework && hasCurrentStageThreePrework && hasCurrentStageFourPrework && hasCurrentStageFivePrework && hasCurrentStageSixPrework;
 
   return {
@@ -982,6 +813,7 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
     viewingActivity: state.viewingActivity && validationActivities.includes(state.viewingActivity) ? state.viewingActivity : "",
     stages: hydratedStages,
     persistence: supabaseEnabled() ? "supabase" : "localStorage",
+    datasetVersion: WORKSHOP_DATASET_VERSION,
   };
 }
 
@@ -1430,7 +1262,7 @@ function Composer({ state, setState }: { state: WorkshopState; setState: React.D
 function Feed({ state, compact }: { state: WorkshopState; compact?: boolean }) {
   const stage = visibleStage(state);
   const list = state.contributions.filter((c) => !compact || c.stageId === stage.id).slice(0, compact ? 6 : 80);
-  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Contribuições da sala" subtitle={compact ? "Últimos registros da etapa." : "Registros da sala."} /><div className="mt-3 grid gap-2">{list.map((c) => <article key={c.id} className="rounded-lg bg-[#F6F6F4] p-3"><div className="flex flex-wrap gap-2"><Badge>{c.type}</Badge><Badge>{c.status}</Badge><Badge tone="bg-white text-[#54504A]">{c.area}</Badge><Badge tone="bg-white text-[#54504A]">{c.authorProfile}</Badge></div><p className="mt-2 text-sm font-semibold leading-5">{c.content}</p><p className="mt-1 text-xs text-[#756F68]">{c.author} · {c.authorRole || "cargo não informado"} · {new Date(c.createdAt).toLocaleString("pt-BR")}</p></article>)}{!list.length && <EmptyState text="Nenhuma contribuição registrada ainda nesta rodada." />}</div></section>;
+  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Contribuições da sala" subtitle={compact ? "Últimos registros da etapa." : "Registros da sala."} /><div className="mt-3 grid gap-2">{list.map((c) => <article key={c.id} className="rounded-lg bg-[#F6F6F4] p-3"><div className="flex flex-wrap gap-2"><Badge>{c.type}</Badge><Badge>{c.status}</Badge><Badge tone="bg-white text-[#54504A]">{c.area}</Badge><Badge tone="bg-white text-[#54504A]">{c.authorProfile}</Badge></div><p className="mt-2 text-sm font-semibold leading-5">{c.content}</p><p className="mt-1 text-xs text-[#756F68]">{c.author} · {c.authorRole || "cargo não informado"} · {new Date(c.createdAt).toLocaleString("pt-BR")}</p></article>)}{!list.length && <EmptyState text="Nenhuma contribuição registrada ainda." />}</div></section>;
 }
 
 function ContextualContributionPanel({ state, setState, stage, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
@@ -1624,7 +1456,7 @@ function FlowWork({ state, setState, stage, updateStage }: { state: WorkshopStat
 }
 
 function StageInputSections({ state, setState, stage, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
-  const kpiItems = stage.kpis.items.length ? stage.kpis.items.map((text, index) => preworkItem(`kpi-${stage.id}-${index}`, stage.kpis.status || "KPI / Meta", text, "Gestão", "Médio", { status: "em validação" })) : [preworkItem(`kpi-${stage.id}-message`, stage.kpis.status || "KPIs / Metas", stage.kpis.message || "KPIs / Metas ainda não definidos.", "Gestão", "Médio", { status: stage.kpis.status === "Definidos" ? "validado" : "em validação" })];
+  const kpiItems = stage.kpis.items.length ? stage.kpis.items.map((text, index) => preworkItem(`kpi-${stage.id}-${index}`, stage.kpis.status || "KPI / Meta", text, "Gestão", "Médio", { status: "em validação" })) : [preworkItem(`kpi-${stage.id}-message`, stage.kpis.status || "KPIs / Metas", stage.kpis.message || "Não informado no pré-work.", "Gestão", "Médio", { status: stage.kpis.status === "Definidos" ? "validado" : "em validação" })];
   return <div className="grid gap-3"><CompactWorkItemSection title="Dores" tone="red" group="pains" items={stage.pains} contributionType="dor" state={state} setState={setState} stage={stage} updateStage={updateStage} /><CompactWorkItemSection title="Regras de negócio" tone="blue" group="rules" items={stage.rules} contributionType="regra de negócio" state={state} setState={setState} stage={stage} updateStage={updateStage} /><CompactWorkItemSection title="Necessidades" tone="green" group="needs" items={stage.needs} contributionType="necessidade" state={state} setState={setState} stage={stage} updateStage={updateStage} /><CompactWorkItemSection title="KPIs / Metas" tone="yellow" group="kpis" items={kpiItems} contributionType="comentário" state={state} setState={setState} stage={stage} updateStage={updateStage} /><CompactWorkItemSection title="Perguntas em aberto" tone="blue" group="openQuestions" items={stage.openQuestions} contributionType="pergunta" state={state} setState={setState} stage={stage} updateStage={updateStage} /></div>;
 }
 
@@ -1666,7 +1498,7 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
       onSubmit: () => {
         if (group === "kpis") {
           const itemIndex = Number(work.id.split("-").at(-1));
-          updateStage(stage.id, (s) => Number.isFinite(itemIndex) && s.kpis.items.length ? ({ ...s, kpis: { ...s.kpis, items: s.kpis.items.filter((_, index) => index !== itemIndex) } }) : ({ ...s, kpis: { ...s.kpis, status: "Aguardando definição em workshop", message: "", items: [] } }));
+          updateStage(stage.id, (s) => Number.isFinite(itemIndex) && s.kpis.items.length ? ({ ...s, kpis: { ...s.kpis, items: s.kpis.items.filter((_, index) => index !== itemIndex) } }) : ({ ...s, kpis: { ...s.kpis, status: "", message: "Não informado no pré-work.", items: [] } }));
         } else {
           updateStage(stage.id, (s) => ({ ...s, [group]: s[group].filter((item) => item.id !== work.id) }));
         }
@@ -1738,7 +1570,7 @@ function DataWork({ state, setState, stage, updateStage }: { state: WorkshopStat
           <p className="mt-2 text-sm leading-6 text-[#5B5650]">{stage.taxImpact.expectedImpact || "Validar impacto durante o workshop."}</p>
         </div>
         <div className="rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-4">
-          <div className="flex flex-wrap gap-2"><Badge>{stage.kpis.status || "Aguardando definição em workshop"}</Badge><Badge tone="bg-white text-[#54504A]">{stage.origin ?? PREWORK_ORIGIN}</Badge></div>
+          <div className="flex flex-wrap gap-2"><Badge>{stage.kpis.status || "Não informado no pré-work"}</Badge><Badge tone="bg-white text-[#54504A]">{stage.origin ?? PREWORK_ORIGIN}</Badge></div>
           <h3 className="mt-3 text-lg font-bold">KPIs / Metas não definidos</h3>
           <p className="mt-2 text-sm leading-6 text-[#5B5650]">{stage.kpis.message || "Validar KPIs / Metas em workshop."}</p>
         </div>
@@ -1833,11 +1665,11 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-lg border border-[#BFE6CB] bg-[#F4FBF6] p-3">
           <SectionTitle title="Hipóteses" subtitle="Caminhos propostos para alcançar o KDD" />
-          <div className="mt-3 grid gap-2">{stage.hypotheses.map((h) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}{!stage.hypotheses.length && <EmptyState text="Nenhuma hipótese criada para esta etapa." />}</div>
+          <div className="mt-3 grid gap-2">{stage.hypotheses.map((h) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}{!stage.hypotheses.length && <EmptyState text="Nenhuma hipótese criada ainda." />}</div>
         </section>
         <section className="rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-3">
           <SectionTitle title="Ofensores" subtitle="Fatores que podem impedir o alcance do KDD" />
-          <div className="mt-3 grid gap-2">{stage.offenders.map((o) => <OffenderCard key={o.id} offender={o} />)}{!stage.offenders.length && <EmptyState text="Nenhum ofensor criado para esta etapa." />}</div>
+          <div className="mt-3 grid gap-2">{stage.offenders.map((o) => <OffenderCard key={o.id} offender={o} />)}{!stage.offenders.length && <EmptyState text="Nenhum ofensor criado ainda." />}</div>
         </section>
       </div>
     </div>
@@ -1858,7 +1690,7 @@ function OffenderCard({ offender }: { offender: Offender }) {
 }
 function Prioritization({ state, updateStage }: { state: WorkshopState; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const stage = activeStage(state);
-  return <div className="grid gap-4"><SectionTitle title="Priorização da etapa ativa" subtitle="Pontue critérios e veja o resultado consolidado com votos da sala." />{stage.hypotheses.map((h) => <article key={h.id} className="rounded-lg border border-[#D8D8D8] bg-[#FAFAF9] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><Badge>{h.priorityStatus}</Badge><p className="mt-3 max-w-4xl text-sm font-semibold leading-6">{h.text}</p></div><Badge tone="bg-white text-[#2D2A26]">Score {priorityScore(h)}</Badge></div><div className="mt-4 grid gap-3 md:grid-cols-4">{(["impactProcess", "financialRisk", "fiscalRisk", "painFrequency", "technicalDependency", "effort", "urgency", "clarity"] as Array<keyof Hypothesis>).map((key) => <LevelSelect key={key} label={String(key)} value={h[key] as Level} onChange={(v) => patchHyp(updateStage, stage.id, h.id, { [key]: v } as Partial<Hypothesis>)} />)}</div><div className="mt-3 flex flex-wrap gap-2">{hypothesisStatuses.map((status) => <MiniButton key={status} active={h.priorityStatus === status} onClick={() => patchHyp(updateStage, stage.id, h.id, { priorityStatus: status })}>{status}</MiniButton>)}</div></article>)}</div>;
+  return <div className="grid gap-4"><SectionTitle title="Priorização da etapa ativa" subtitle="Pontue critérios e veja o resultado consolidado com votos da sala." />{stage.hypotheses.map((h) => <article key={h.id} className="rounded-lg border border-[#D8D8D8] bg-[#FAFAF9] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><Badge>{h.priorityStatus}</Badge><p className="mt-3 max-w-4xl text-sm font-semibold leading-6">{h.text}</p></div><Badge tone="bg-white text-[#2D2A26]">Score {priorityScore(h)}</Badge></div><div className="mt-4 grid gap-3 md:grid-cols-4">{(["impactProcess", "financialRisk", "fiscalRisk", "painFrequency", "technicalDependency", "effort", "urgency", "clarity"] as Array<keyof Hypothesis>).map((key) => <LevelSelect key={key} label={String(key)} value={h[key] as Level} onChange={(v) => patchHyp(updateStage, stage.id, h.id, { [key]: v } as Partial<Hypothesis>)} />)}</div><div className="mt-3 flex flex-wrap gap-2">{hypothesisStatuses.map((status) => <MiniButton key={status} active={h.priorityStatus === status} onClick={() => patchHyp(updateStage, stage.id, h.id, { priorityStatus: status })}>{status}</MiniButton>)}</div></article>)}{!stage.hypotheses.length && <EmptyState text="Nenhuma hipótese priorizada ainda." />}</div>;
 }
 function patchHyp(updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void, stageId: string, hypId: string, patch: Partial<Hypothesis>) {
   updateStage(stageId, (s) => ({ ...s, hypotheses: s.hypotheses.map((h) => h.id === hypId ? { ...h, ...patch } : h) }));
@@ -1890,7 +1722,7 @@ function Plans({ state, updateStage }: { state: WorkshopState; updateStage: (sta
           </div>
         </div>
       </section>
-      {!prioritized.length && <EmptyState text="Ainda não há hipóteses priorizadas." />}
+      {!prioritized.length && <EmptyState text="Nenhum plano criado ainda." />}
       {!!prioritized.length && (
         <section className="rounded-lg border border-[#D8D8D8] bg-white p-3">
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -2076,7 +1908,7 @@ function SmallStat({ value, label }: { value: number; label: string }) { return 
 function ParticipantsPanel({ state }: { state: WorkshopState }) {
   const [filter, setFilter] = useState("Todas");
   const visible = state.participants.filter((p) => filter === "Todas" || p.area === filter);
-  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><SectionTitle title="Presença e composição da sala" subtitle="Participantes, áreas representadas e status de presença." /><Badge>{state.participants.length} pessoas</Badge></div><div className="mt-4 flex flex-wrap gap-2"><MiniButton active={filter === "Todas"} onClick={() => setFilter("Todas")}>Todas</MiniButton>{areas.map((a) => <MiniButton key={a} active={filter === a} onClick={() => setFilter(a)}>{a}</MiniButton>)}</div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visible.map((p) => <article key={p.id} className="rounded-lg bg-[#F6F6F4] p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-bold">{p.name}</h3><p className="text-sm text-[#5B5650]">{p.role || "Cargo não informado"}</p></div><Badge>{p.status}</Badge></div><p className="mt-2 text-xs font-bold text-[#756F68]">{p.area} · {p.workshopRole || "papel a definir"}</p></article>)}</div></section>;
+  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><SectionTitle title="Presença e composição da sala" subtitle="Participantes, áreas representadas e status de presença." /><Badge>{state.participants.length} pessoas</Badge></div><div className="mt-4 flex flex-wrap gap-2"><MiniButton active={filter === "Todas"} onClick={() => setFilter("Todas")}>Todas</MiniButton>{areas.map((a) => <MiniButton key={a} active={filter === a} onClick={() => setFilter(a)}>{a}</MiniButton>)}</div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visible.map((p) => <article key={p.id} className="rounded-lg bg-[#F6F6F4] p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-bold">{p.name}</h3><p className="text-sm text-[#5B5650]">{p.role || "Cargo não informado"}</p></div><Badge>{p.status}</Badge></div><p className="mt-2 text-xs font-bold text-[#756F68]">{p.area} · {p.workshopRole || "papel a definir"}</p></article>)}{!visible.length && <div className="md:col-span-2 xl:col-span-3"><EmptyState text="Nenhum participante cadastrado ainda." /></div>}</div></section>;
 }
 function Facilitation({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const openModal = useActionModal();
