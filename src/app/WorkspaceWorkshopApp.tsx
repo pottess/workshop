@@ -254,6 +254,7 @@ interface WorkshopState {
 
 const STORAGE_KEY = "workspace-workshop-acordos-collab-v2";
 const WORKSHOP_DATASET_VERSION = "2026-07-14-workshop-clean-db-v2";
+const LAST_PARTICIPANT_KEY = `${STORAGE_KEY}:last-participant`;
 const areas = ["Comercial", "Financeiro", "Fiscal", "Produto", "Tecnologia", "Dados", "CSC", "Jurídico / Compliance", "Outra"];
 const levels: Level[] = ["Baixo", "Médio", "Alto"];
 const activities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses", "priorizacao", "plano", "resumo"];
@@ -1015,12 +1016,47 @@ function MiniButton({ children, onClick, active, disabled }: { children: React.R
   return <button type="button" onClick={onClick} disabled={disabled} className={`inline-flex min-h-8 items-center justify-center gap-1 rounded-md px-3 py-1 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${active ? "bg-[#2D2A26] text-white" : "border border-[#D8D8D8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"}`}>{children}</button>;
 }
 
+type EntryDraft = { name: string; role: string; area: string; profile: "Participante" | "Facilitadora" };
+const defaultEntryDraft: EntryDraft = { name: "", role: "", area: "Comercial", profile: "Participante" };
+function participantMatchKey(data: Pick<Participant, "name" | "area" | "workshopRole">) {
+  return [data.name, data.area, data.workshopRole].map((value) => value.trim().toLowerCase()).join("|");
+}
+function savedEntryDraft(): EntryDraft {
+  try {
+    const saved = localStorage.getItem(LAST_PARTICIPANT_KEY);
+    if (!saved) return defaultEntryDraft;
+    const parsed = JSON.parse(saved) as Partial<EntryDraft>;
+    const profile = parsed.profile === "Facilitadora" ? "Facilitadora" : "Participante";
+    return { ...defaultEntryDraft, ...parsed, profile, area: parsed.area && areas.includes(parsed.area) ? parsed.area : defaultEntryDraft.area };
+  } catch {
+    return defaultEntryDraft;
+  }
+}
+
 function EntryScreen({ setState }: { setState: React.Dispatch<React.SetStateAction<WorkshopState>> }) {
-  const [draft, setDraft] = useState({ name: "", role: "", area: "Comercial", profile: "Participante" as "Participante" | "Facilitadora" });
+  const [draft, setDraft] = useState<EntryDraft>(() => savedEntryDraft());
   const enter = () => {
     if (!draft.name.trim()) return;
-    const participant: Participant = { id: id("participant"), name: draft.name, role: draft.role, area: draft.area, workshopRole: draft.profile, status: draft.profile === "Facilitadora" ? "facilitador" : "presente", createdAt: now() };
-    setState((s) => ({ ...s, currentParticipantId: participant.id, activeView: "room", participants: [participant, ...s.participants] }));
+    const cleanDraft: EntryDraft = { name: draft.name.trim(), role: draft.role.trim(), area: draft.area, profile: draft.profile };
+    try {
+      localStorage.setItem(LAST_PARTICIPANT_KEY, JSON.stringify(cleanDraft));
+    } catch {
+      // Se o navegador bloquear storage, o usuário ainda consegue entrar normalmente.
+    }
+    const participant: Participant = { id: id("participant"), name: cleanDraft.name, role: cleanDraft.role, area: cleanDraft.area, workshopRole: cleanDraft.profile, status: cleanDraft.profile === "Facilitadora" ? "facilitador" : "presente", createdAt: now() };
+    setState((s) => {
+      const matchKey = participantMatchKey(participant);
+      const existing = s.participants.find((p) => participantMatchKey(p) === matchKey);
+      if (existing) {
+        return {
+          ...s,
+          currentParticipantId: existing.id,
+          activeView: "room",
+          participants: s.participants.map((p) => (p.id === existing.id ? { ...p, role: participant.role, status: participant.status } : p)),
+        };
+      }
+      return { ...s, currentParticipantId: participant.id, activeView: "room", participants: [participant, ...s.participants] };
+    });
   };
   return (
     <main className="min-h-screen bg-[#F6F6F4] p-5 text-[#2D2A26]">
@@ -1029,7 +1065,7 @@ function EntryScreen({ setState }: { setState: React.Dispatch<React.SetStateActi
           <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[#D8D8D8] bg-white px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-[#756F68]"><Layers3 size={14} />Sala de Trabalho do Workshop</div>
           <h1 className="max-w-3xl text-5xl font-bold leading-tight">Workshop de Acordos</h1>
           <p className="mt-4 max-w-2xl text-lg leading-8 text-[#5B5650]">Entre na sala colaborativa para revisar etapas, contribuir, votar, validar decisões e construir planos de ação com o grupo.</p>
-          <div className="mt-6 grid gap-3 sm:grid-cols-3"><Metric value="6" label="etapas" /><Metric value="colaborativo" label="uso simultâneo" /><Metric value="Supabase" label="preparado" /></div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2"><Metric value="6" label="etapas" /><Metric value="colaborativo" label="uso simultâneo" /></div>
         </div>
         <div className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm">
           <h2 className="text-2xl font-bold">Entrar na sala</h2>
@@ -1039,6 +1075,7 @@ function EntryScreen({ setState }: { setState: React.Dispatch<React.SetStateActi
             <Field label="Área"><select className={inputClass()} value={draft.area} onChange={(e) => setDraft({ ...draft, area: e.target.value })}>{areas.map((a) => <option key={a}>{a}</option>)}</select></Field>
             <Field label="Perfil de acesso"><select className={inputClass()} value={draft.profile} onChange={(e) => setDraft({ ...draft, profile: e.target.value as "Participante" | "Facilitadora" })}><option>Participante</option><option>Facilitadora</option></select></Field>
             <PrimaryButton disabled={!draft.name.trim()} onClick={enter}><Send size={17} />Entrar na sala</PrimaryButton>
+            <p className="text-xs font-bold text-[#756F68]">Dados lembrados neste navegador para o próximo acesso.</p>
           </div>
         </div>
       </section>
