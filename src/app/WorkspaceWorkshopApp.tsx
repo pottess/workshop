@@ -930,19 +930,17 @@ function useWorkshopState() {
 }
 
 function normalizeStage(stage: Stage): Stage {
-  const hasPending = stage.pending.length > 0 || stage.taxImpact.status.includes("pendência") || [...stage.pains, ...stage.rules, ...stage.needs, ...stage.flow, ...stage.openQuestions].some((i) => ["ajustar", "discordância", "dúvida"].includes(i.status));
-  const flowReviewed = stage.flow.every((i) => i.status === "validado" || i.status === "pendência");
-  const reviewed = flowReviewed && stage.taxImpact.status !== "não avaliado" && !["em revisão", "em validação"].includes(stage.kdd.status);
-  return { ...stage, status: reviewed ? (hasPending ? "com pendências" : "validada") : hasPending ? "com ajustes" : stage.status };
+  const complete = validationMissing(stage).length === 0;
+  return { ...stage, status: complete ? "validada" : stage.status === "validada" ? "em validação" : stage.status };
 }
 
 function validationMissing(stage: Stage) {
   const flowReviewed = stage.flow.every((i) => i.status === "validado" || i.status === "pendência");
-  const taxResolved = stage.taxImpact.status !== "não avaliado" || stage.pending.some((p) => p.includes("Reforma Tributária"));
+  const taxResolved = stage.taxImpact.status !== "não avaliado";
   return [
     !flowReviewed && "Confirmar todos os blocos do fluxo ou marcar pendência.",
-    !taxResolved && "Avaliar Reforma Tributária ou registrar pendência obrigatória.",
-    ["em validação", "em revisão"].includes(stage.kdd.status) && "Validar ou ajustar o KDD preliminar.",
+    !taxResolved && "Avaliar Reforma Tributária, incluindo “Não sabemos ainda” quando aplicável.",
+    stage.kdd.status !== "validado" && "Validar o KDD preliminar.",
   ].filter(Boolean) as string[];
 }
 
@@ -963,7 +961,7 @@ function visibleActivity(state: WorkshopState) {
   return state.viewingActivity || state.activeActivity;
 }
 function allItems(stage: Stage) {
-  return [...stage.pains, ...stage.rules, ...stage.needs, ...(stage.kpiItems ?? []), ...stage.openQuestions];
+  return [...stage.pains, ...stage.rules, ...stage.needs, ...stage.openQuestions];
 }
 function shortStageName(stage: Stage) {
   return stage.name.replace(" de Acordos", "").replace(" da verba", "");
@@ -989,7 +987,7 @@ function phaseActivityIndex(phase: WorkshopPhase, activity: Activity) {
 }
 function isActivityComplete(stage: Stage, activity: Activity) {
   if (activity === "fluxo") return stage.flow.every((i) => i.status === "validado" || i.status === "pendência");
-  if (activity === "reforma") return stage.taxImpact.status !== "não avaliado" || stage.pending.some((p) => p.includes("Reforma Tributária"));
+  if (activity === "reforma") return stage.taxImpact.status !== "não avaliado";
   if (activity === "kdd") return stage.kdd.status === "validado";
   if (activity === "dados") return allItems(stage).some((i) => i.status !== "em validação" && i.status !== "em revisão");
   if (activity === "hipoteses") return stage.hypotheses.length > 0 || stage.offenders.length > 0 || stage.pending.some((p) => p.includes("sem hipótese"));
@@ -997,7 +995,7 @@ function isActivityComplete(stage: Stage, activity: Activity) {
 }
 function hasActivityPending(stage: Stage, activity: Activity) {
   if (activity === "fluxo") return stage.flow.some((i) => ["pendência", "dúvida", "ajustar", "discordância"].includes(i.status));
-  if (activity === "reforma") return stage.taxImpact.status === "não avaliado" || stage.pending.some((p) => p.includes("Reforma Tributária"));
+  if (activity === "reforma") return stage.taxImpact.status === "não avaliado";
   if (activity === "kdd") return stage.kdd.status !== "validado";
   if (activity === "dados") return allItems(stage).some((i) => ["em validação", "em revisão", "dúvida", "ajustar", "discordância"].includes(i.status));
   if (activity === "hipoteses") return !isActivityComplete(stage, activity);
@@ -1014,10 +1012,9 @@ function stageProgress(stage: Stage) {
 }
 function stageChecklist(stage: Stage) {
   return [
-    { label: "Fluxo revisado", done: isActivityComplete(stage, "fluxo") },
+    { label: "Validar fluxo", done: isActivityComplete(stage, "fluxo") },
     { label: "Reforma Tributária avaliada", done: isActivityComplete(stage, "reforma") },
-    { label: "KDD validado", done: isActivityComplete(stage, "kdd") },
-    { label: "Hipóteses/ofensores criados", done: isActivityComplete(stage, "hipoteses") },
+    { label: "Validar KDD", done: isActivityComplete(stage, "kdd") },
   ];
 }
 function nextValidationActivity(activity: Activity) {
@@ -1246,7 +1243,7 @@ function AppShell({ state, setState, children }: { state: WorkshopState; setStat
   const currentStagePosition = stageIndex(state) + 1;
   const availableActivities = phaseActivities(state.workspacePhase);
   const currentActivityPosition = phaseActivityIndex(state.workspacePhase, state.activeActivity) + 1;
-  const validatedStages = state.stages.filter((s) => s.status === "validada" || s.status === "com pendências").length;
+  const validatedStages = state.stages.filter((s) => s.status === "validada").length;
   const nav: { key: View; label: string }[] = [
     { key: "room", label: "Sala do Workshop" },
     { key: "stages", label: "Etapas" },
@@ -1294,6 +1291,7 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
   const currentStageIndex = Math.max(0, state.stages.findIndex((s) => s.id === stage.id));
   const nextStage = state.stages[currentStageIndex + 1];
   const done = stageProgress(stage);
+  const missing = validationMissing(stage);
 
   const goActivity = (next: Activity) => setState((s) => canControl ? ({ ...s, activeActivity: next, activeView: "room" }) : ({ ...s, viewingActivity: next, activeView: "room" }));
   const goStage = (stageId: string) => setState((s) => {
@@ -1301,8 +1299,8 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
     return canControl ? ({ ...s, activeStageId: stageId, viewingStageId: "", viewingActivity: "", activeActivity: firstActivity, activeView: "room" }) : ({ ...s, viewingStageId: stageId, viewingActivity: firstActivity, activeView: "room" });
   });
   const finishStage = () => {
-    const pending = validationMissing(stage);
-    updateStage(stage.id, (s) => ({ ...s, status: pending.length ? "com pendências" : "validada" }));
+    if (missing.length) return;
+    updateStage(stage.id, (s) => ({ ...s, status: "validada" }));
     if (nextStage) setState((s) => ({ ...s, activeStageId: nextStage.id, activeActivity: phaseActivities(s.workspacePhase)[0] ?? "fluxo", activeView: "room" }));
   };
 
@@ -1321,7 +1319,7 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
         <div className="flex min-w-0 flex-1 overflow-x-auto">
           <div className="flex min-w-[620px] gap-1">{availableActivities.map((item, index) => <button key={item} type="button" onClick={() => goActivity(item)} className={`h-8 flex-1 rounded-md px-2 text-xs font-bold ${item === activity ? "bg-[#2D2A26] text-white" : item === state.activeActivity ? "bg-[#FFF4CC] text-[#6F5400]" : "bg-[#F6F6F4] text-[#54504A]"}`}><span className="mr-1 text-[10px] opacity-70">{index + 1}</span>{activityShortLabels[item] ?? activityLabels[item]}</button>)}</div>
         </div>
-        {canControl && <div className="flex flex-wrap gap-1.5"><PrimaryButton onClick={finishStage}>Concluir etapa</PrimaryButton></div>}
+        {canControl && <div className="flex flex-wrap gap-1.5"><PrimaryButton disabled={missing.length > 0} onClick={finishStage}>Concluir etapa</PrimaryButton></div>}
       </div>
     </section>
   );
@@ -1617,7 +1615,7 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
           updatedAt: now(),
         };
         if (group === "kpis") {
-          updateStage(stage.id, (s) => ({ ...s, kpiItems: [work, ...(s.kpiItems ?? [])], kpis: { ...s.kpis, message: "", status: s.kpis.status || "Em validação" } }));
+          updateStage(stage.id, (s) => ({ ...s, kpiItems: [work, ...(s.kpiItems ?? [])], kpis: { ...s.kpis, message: "" } }));
         } else {
           updateStage(stage.id, (s) => ({ ...s, [group]: [work, ...s[group]] }));
         }
@@ -1643,7 +1641,7 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
           ],
       onSubmit: ({ title: itemTitle, text, area, notes }) => {
         if (group === "kpis") {
-          updateStage(stage.id, (s) => ({ ...s, kpiItems: (s.kpiItems ?? []).map((item) => item.id === work.id ? { ...item, title: itemTitle.trim() || undefined, text: text.trim(), area: area.trim() || work.area, status: "em revisão", updatedAt: now() } : item) }));
+          updateStage(stage.id, (s) => ({ ...s, kpiItems: (s.kpiItems ?? []).map((item) => item.id === work.id ? { ...item, title: itemTitle.trim() || undefined, text: text.trim(), area: area.trim() || work.area, updatedAt: now() } : item) }));
         } else if (simplifiedGroup) {
           patchWorkItem(updateStage, stage, group, work.id, { title: itemTitle.trim() || undefined, text: text.trim(), comments: notes?.trim() ? [notes.trim()] : [], status: "em revisão", updatedAt: now() });
         } else {
@@ -1684,7 +1682,8 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
         {items.map((work) => (
           <article key={work.id} className={`grid h-auto min-h-[94px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-md border px-3 py-2 ${theme.card}`}>
             <div className="min-w-0 flex-1">
-              {!simplifiedGroup && <div className="mb-1 flex flex-wrap gap-1.5"><Badge>{work.status}</Badge>{group !== "openQuestions" && <Badge tone="bg-white text-[#54504A]">Impacto {work.impact}</Badge>}{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>}
+              {!simplifiedGroup && group !== "kpis" && <div className="mb-1 flex flex-wrap gap-1.5"><Badge>{work.status}</Badge>{group !== "openQuestions" && <Badge tone="bg-white text-[#54504A]">Impacto {work.impact}</Badge>}{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>}
+              {group === "kpis" && <div className="mb-1 flex flex-wrap gap-1.5">{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>}
               <p className="whitespace-normal break-words text-sm font-bold leading-5">{work.title || work.text}</p>
               {work.title && <p className="mt-0.5 whitespace-normal break-words text-xs font-semibold leading-5 text-[#5B5650]">{work.text}</p>}
             </div>
@@ -1812,10 +1811,10 @@ function DataWork({ state, setState, stage, updateStage }: { state: WorkshopStat
           <h3 className="mt-3 text-lg font-bold">Reforma Tributária não avaliada</h3>
           <p className="mt-2 text-sm leading-6 text-[#5B5650]">{stage.taxImpact.expectedImpact || "Validar impacto durante o workshop."}</p>
         </div>
-        <div className="rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-4">
-          <div className="flex flex-wrap gap-2"><Badge>{stage.kpis.status || "Não informado no pré-work"}</Badge><Badge tone="bg-white text-[#54504A]">{stage.origin ?? PREWORK_ORIGIN}</Badge></div>
-          <h3 className="mt-3 text-lg font-bold">KPIs / Metas não definidos</h3>
-          <p className="mt-2 text-sm leading-6 text-[#5B5650]">{stage.kpis.message || "Validar KPIs / Metas em workshop."}</p>
+        <div className="rounded-lg border border-[#F0DE9A] bg-[#FFFBEA] p-4">
+          <div className="flex flex-wrap gap-2"><Badge tone="bg-white text-[#54504A]">{stage.origin ?? PREWORK_ORIGIN}</Badge></div>
+          <h3 className="mt-3 text-lg font-bold">KPIs / Metas</h3>
+          <p className="mt-2 text-sm leading-6 text-[#5B5650]">{stage.kpis.message || "Dados de apoio para a discussão da etapa."}</p>
         </div>
       </section>
       <div className="grid gap-4 xl:grid-cols-4">
@@ -2234,7 +2233,7 @@ function Summary({ state }: { state: WorkshopState }) {
   const text = useMemo(() => buildText(state), [state]);
   const exportJson = () => { const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "workspace-workshop-acordos.json"; link.click(); URL.revokeObjectURL(url); };
   const represented = new Set(state.participants.map((p) => p.area)).size;
-  const validated = state.stages.filter((s) => s.status === "validada" || s.status === "com pendências").length;
+  const validated = state.stages.filter((s) => s.status === "validada").length;
   const kdds = state.stages.filter((s) => s.kdd.status === "validado").length;
   const tax = state.stages.filter((s) => s.taxImpact.answer && s.taxImpact.answer !== "Não").length;
   const hypotheses = state.stages.reduce((sum, s) => sum + s.hypotheses.length, 0);
@@ -2244,7 +2243,7 @@ function Summary({ state }: { state: WorkshopState }) {
   return <div className="grid gap-5"><section className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><SectionTitle title="Resumo final colaborativo" subtitle="Consolidação do que foi produzido por todos na sala." />{canExport && <div className="flex flex-wrap gap-2"><PrimaryButton onClick={exportJson}><FileJson size={17} />JSON</PrimaryButton><SecondaryButton onClick={() => navigator.clipboard.writeText(html)}><Download size={17} />HTML</SecondaryButton><SecondaryButton onClick={() => navigator.clipboard.writeText(text)}><FileText size={17} />Texto</SecondaryButton></div>}</div><div className="mt-5 grid gap-3 md:grid-cols-4"><Metric value={String(state.participants.length)} label="participantes" /><Metric value={String(represented)} label="áreas" /><Metric value={`${validated}/6`} label="etapas validadas" /><Metric value={`${kdds}/6`} label="KDDs validados" /><Metric value={String(tax)} label="impactos Reforma" /><Metric value={String(hypotheses)} label="hipóteses" /><Metric value={String(prioritized)} label="priorizadas" /><Metric value={String(plans)} label="planos" /></div></section>{state.stages.map((s) => <StageSummary key={s.id} stage={s} />)}{canExport && <section className="rounded-lg border border-[#D8D8D8] bg-white p-5"><SectionTitle title="Texto estruturado" subtitle="Pronto para copiar em documentação." /><textarea readOnly className={`${textareaClass()} mt-4 min-h-80 font-mono text-xs`} value={text} /></section>}</div>;
 }
 function StageSummary({ stage }: { stage: Stage }) {
-  const kpiSummary = [...(stage.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), stage.kpis.status, stage.kpis.message, ...stage.kpis.items];
+  const kpiSummary = [...(stage.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), stage.kpis.message, ...stage.kpis.items];
   return <article className="rounded-lg border border-[#D8D8D8] bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-bold">{stage.name}</h3>{stage.origin && <p className="mt-1 text-xs font-bold uppercase tracking-[0.12em] text-[#756F68]">{stage.origin}</p>}</div><Badge>{stage.status}</Badge></div><div className="mt-4 grid gap-4 lg:grid-cols-2"><SummaryPanel title="Impacto Reforma Tributária" items={[stage.taxImpact.answer || "Não avaliado", stage.taxImpact.expectedImpact, stage.taxImpact.obligation]} /><SummaryPanel title="KPIs / Metas" items={kpiSummary} /><SummaryPanel title="KDD" items={[stage.kdd.final || stage.kdd.draft]} /><SummaryPanel title="Dores validadas" items={stage.pains.filter((i) => i.status === "validado").map((i) => i.text)} /><SummaryPanel title="Regras críticas" items={stage.rules.filter((i) => i.impact === "Alto").map((i) => i.text)} /><SummaryPanel title="Necessidades priorizadas" items={stage.needs.filter((i) => i.impact !== "Baixo").map((i) => i.text)} /><SummaryPanel title="Perguntas em aberto" items={stage.openQuestions.map((i) => i.text)} /><SummaryPanel title="Hipóteses criadas" items={stage.hypotheses.map((h) => h.text)} /><SummaryPanel title="Ofensores identificados" items={stage.offenders.map((o) => `${o.type}: ${o.content}`)} /><SummaryPanel title="Planos de ação" items={stage.plans.map((p) => p.action || p.nextStep || "Plano em construção")} /><SummaryPanel title="Responsáveis" items={stage.plans.map((p) => p.owner).filter(Boolean)} /><SummaryPanel title="Pendências" items={stage.pending} /></div></article>;
 }
 function SummaryPanel({ title, items }: { title: string; items: string[] }) {
@@ -2254,11 +2253,11 @@ function SummaryPanel({ title, items }: { title: string; items: string[] }) {
 function escapeHtml(value: string) { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
 function listHtml(items: string[]) { const clean = items.filter(Boolean); return clean.length ? `<ul>${clean.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>` : "<p>Sem registros.</p>"; }
 function buildHtml(state: WorkshopState) {
-  return `<section><h1>Workshop de Acordos - Resumo colaborativo</h1><p><strong>Participantes:</strong> ${state.participants.length}</p><p><strong>Áreas representadas:</strong> ${new Set(state.participants.map((p) => p.area)).size}</p>${state.stages.map((s) => `<article><h2>${escapeHtml(s.name)}</h2><p><strong>Origem:</strong> ${escapeHtml(s.origin || "Workshop")}</p><h3>KDD</h3>${listHtml([s.kdd.final || s.kdd.draft])}<h3>KPIs / Metas</h3>${listHtml([...(s.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), s.kpis.status, s.kpis.message, ...s.kpis.items])}<h3>Perguntas em aberto</h3>${listHtml(s.openQuestions.map((q) => q.text))}<h3>Hipóteses</h3>${listHtml(s.hypotheses.map((h) => h.text))}<h3>Ofensores</h3>${listHtml(s.offenders.map((o) => `${o.type}: ${o.content}`))}<h3>Planos de ação</h3>${listHtml(s.plans.map((p) => p.action || p.nextStep))}</article>`).join("")}</section>`;
+  return `<section><h1>Workshop de Acordos - Resumo colaborativo</h1><p><strong>Participantes:</strong> ${state.participants.length}</p><p><strong>Áreas representadas:</strong> ${new Set(state.participants.map((p) => p.area)).size}</p>${state.stages.map((s) => `<article><h2>${escapeHtml(s.name)}</h2><p><strong>Origem:</strong> ${escapeHtml(s.origin || "Workshop")}</p><h3>KDD</h3>${listHtml([s.kdd.final || s.kdd.draft])}<h3>KPIs / Metas</h3>${listHtml([...(s.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), s.kpis.message, ...s.kpis.items])}<h3>Perguntas em aberto</h3>${listHtml(s.openQuestions.map((q) => q.text))}<h3>Hipóteses</h3>${listHtml(s.hypotheses.map((h) => h.text))}<h3>Ofensores</h3>${listHtml(s.offenders.map((o) => `${o.type}: ${o.content}`))}<h3>Planos de ação</h3>${listHtml(s.plans.map((p) => p.action || p.nextStep))}</article>`).join("")}</section>`;
 }
 function buildText(state: WorkshopState) {
   const lines = ["WORKSHOP DE ACORDOS - RESUMO COLABORATIVO", "", `Participantes: ${state.participants.length}`, `Áreas representadas: ${new Set(state.participants.map((p) => p.area)).size}`, ""];
-  state.stages.forEach((s) => { lines.push(`ETAPA: ${s.name}`, `Status: ${s.status}`, `Origem: ${s.origin || "Workshop"}`, `Reforma Tributária: ${s.taxImpact.answer || "Não avaliado"}`, `KPIs / Metas: ${[...(s.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), s.kpis.status, s.kpis.message, ...s.kpis.items].filter(Boolean).join(" | ") || "Sem registros"}`, `KDD: ${s.kdd.final || s.kdd.draft}`, `Perguntas em aberto: ${s.openQuestions.map((q) => q.text).join(" | ") || "Sem registros"}`, `Hipóteses: ${s.hypotheses.map((h) => h.text).join(" | ") || "Sem registros"}`, `Ofensores: ${s.offenders.map((o) => o.content).join(" | ") || "Sem registros"}`, `Planos: ${s.plans.map((p) => p.action || p.nextStep).join(" | ") || "Sem registros"}`, ""); });
+  state.stages.forEach((s) => { lines.push(`ETAPA: ${s.name}`, `Status: ${s.status}`, `Origem: ${s.origin || "Workshop"}`, `Reforma Tributária: ${s.taxImpact.answer || "Não avaliado"}`, `KPIs / Metas: ${[...(s.kpiItems ?? []).map((item) => `${item.title || "KPI / Meta"}: ${item.text}`), s.kpis.message, ...s.kpis.items].filter(Boolean).join(" | ") || "Sem registros"}`, `KDD: ${s.kdd.final || s.kdd.draft}`, `Perguntas em aberto: ${s.openQuestions.map((q) => q.text).join(" | ") || "Sem registros"}`, `Hipóteses: ${s.hypotheses.map((h) => h.text).join(" | ") || "Sem registros"}`, `Ofensores: ${s.offenders.map((o) => o.content).join(" | ") || "Sem registros"}`, `Planos: ${s.plans.map((p) => p.action || p.nextStep).join(" | ") || "Sem registros"}`, ""); });
   return lines.join("\n");
 }
 
