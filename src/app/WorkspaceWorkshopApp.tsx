@@ -759,6 +759,10 @@ function sharedWorkshopState(state: WorkshopState): WorkshopState {
   return { ...state, activeView: "room", viewingStageId: "", viewingActivity: "", highlightedItemId: "", currentParticipantId: "", persistence: "supabase" };
 }
 
+function sharedWorkshopSignature(state: WorkshopState) {
+  return JSON.stringify(sharedWorkshopState(hydrateWorkshopState({ ...initialState(), ...state, persistence: "supabase" })));
+}
+
 function applyRemoteWorkshopState(current: WorkshopState, remote: WorkshopState): WorkshopState {
   const currentParticipantValue = current.participants.find((p) => p.id === current.currentParticipantId);
   const hydrated = hydrateWorkshopState({ ...initialState(), ...remote, persistence: "supabase" });
@@ -881,6 +885,8 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
 
 function useWorkshopState() {
   const lastRemoteUpdatedAt = useRef("");
+  const lastPersistedSharedState = useRef("");
+  const applyingRemoteState = useRef(false);
   const [state, setState] = useState<WorkshopState>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -897,6 +903,8 @@ function useWorkshopState() {
       if (cancelled) return;
       if (remoteSnapshot) {
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+        lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
+        applyingRemoteState.current = true;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
       }
     }).finally(() => {
@@ -907,8 +915,18 @@ function useWorkshopState() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (!supabaseEnabled() || !supabaseHydrated) return;
+    const signature = sharedWorkshopSignature(state);
+    if (applyingRemoteState.current && signature === lastPersistedSharedState.current) {
+      applyingRemoteState.current = false;
+      return;
+    }
+    applyingRemoteState.current = false;
+    if (signature === lastPersistedSharedState.current) return;
     const timeout = window.setTimeout(() => void syncSupabase(state).then((updatedAt) => {
-      if (updatedAt) lastRemoteUpdatedAt.current = updatedAt;
+      if (updatedAt) {
+        lastRemoteUpdatedAt.current = updatedAt;
+        lastPersistedSharedState.current = signature;
+      }
     }), 650);
     return () => window.clearTimeout(timeout);
   }, [state, supabaseHydrated]);
@@ -916,8 +934,15 @@ function useWorkshopState() {
     if (!supabaseEnabled() || !supabaseHydrated) return;
     const interval = window.setInterval(() => {
       void loadSupabaseState().then((remoteSnapshot) => {
-        if (!remoteSnapshot || !remoteSnapshot.updatedAt || remoteSnapshot.updatedAt === lastRemoteUpdatedAt.current) return;
+        if (!remoteSnapshot) return;
+        const signature = sharedWorkshopSignature(remoteSnapshot.state);
+        if (signature === lastPersistedSharedState.current) {
+          if (remoteSnapshot.updatedAt) lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+          return;
+        }
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+        lastPersistedSharedState.current = signature;
+        applyingRemoteState.current = true;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
       });
     }, 3500);
