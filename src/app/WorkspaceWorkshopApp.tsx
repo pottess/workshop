@@ -2261,9 +2261,44 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
   );
 }
 function nextActivity(a: Activity): Activity { const i = activities.indexOf(a); return activities[Math.min(i + 1, activities.length - 1)]; }
-function HypothesesView({ state, updateStage }: { state: WorkshopState; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+function HypothesesView({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+  const openModal = useActionModal();
+  const participant = currentParticipant(state);
+  const active = activeStage(state);
   const all = state.stages.flatMap((s) => s.hypotheses.map((h) => ({ s, h })));
-  return <div className="grid gap-4"><NowPanel state={state} />{all.map(({ h }) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}{!all.length && <EmptyState text="Nenhuma hipótese criada ainda." />}</div>;
+  const createHypothesis = () => openModal({
+    title: "Nova hipótese",
+    message: `Etapa atual: ${active.name}`,
+    confirmLabel: "Salvar hipótese",
+    fields: [
+      { id: "stageId", label: "Etapa", value: active.id, options: state.stages.map((stage) => ({ label: `${stage.order}. ${stage.name}`, value: stage.id })) },
+      { id: "action", label: "Se [ação ou mudança]", multiline: true, required: true },
+      { id: "result", label: "Então [resultado esperado]", required: true },
+      { id: "evidence", label: "Porque [evidência]", multiline: true, required: true },
+    ],
+    onSubmit: (values) => {
+      const targetStage = state.stages.find((stage) => stage.id === values.stageId) ?? active;
+      const text = `Se ${values.action.trim()}, então ${values.result.trim()}, porque ${values.evidence.trim()}.`;
+      const h: Hypothesis = { ...hypothesis(targetStage.id, "", "", participant?.area ?? "Workshop"), text, expectedResult: values.result.trim(), evidence: values.evidence.trim(), area: participant?.area ?? "Workshop", createdBy: participant?.name ?? "Workshop", createdAt: now() };
+      updateStage(targetStage.id, (stage) => ({ ...stage, hypotheses: [h, ...stage.hypotheses] }));
+      addContribution(setState, state, { type: "hipótese", content: text, impact: "Médio" });
+    },
+  });
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-lg border border-[#D8D8D8] bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SectionTitle title="Hipóteses" subtitle="Crie e acompanhe hipóteses para qualquer etapa do workshop." />
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="bg-[#FFF4CC] text-[#6F5400]">{active.name}</Badge>
+            <PrimaryButton disabled={!participant} onClick={createHypothesis}><Plus size={17} />Criar hipótese</PrimaryButton>
+          </div>
+        </div>
+      </section>
+      {all.map(({ s, h }) => <div key={h.id} className="grid gap-2"><Badge tone="bg-[#F6F6F4] text-[#54504A]">{s.name}</Badge><HypothesisCard h={h} state={state} updateStage={updateStage} /></div>)}
+      {!all.length && <EmptyState text="Nenhuma hipótese criada ainda. Clique em Criar hipótese para adicionar." />}
+    </div>
+  );
 }
 function Summary({ state }: { state: WorkshopState }) {
   const html = useMemo(() => buildHtml(state), [state]);
@@ -2319,5 +2354,5 @@ export default function WorkspaceWorkshopApp() {
   };
   if (!participant) return <ActionModalProvider><EntryScreen setState={setState} /></ActionModalProvider>;
   if (!workshopStarted) return <ActionModalProvider><WorkshopOpening state={state} setState={setState} onStart={startWorkshop} /></ActionModalProvider>;
-  return <ActionModalProvider><AppShell state={state} setState={setState}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
+  return <ActionModalProvider><AppShell state={state} setState={setState}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
 }
