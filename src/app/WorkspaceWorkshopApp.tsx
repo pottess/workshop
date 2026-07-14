@@ -252,8 +252,8 @@ interface WorkshopState {
   datasetVersion: string;
 }
 
-const STORAGE_KEY = "workspace-workshop-acordos-collab-v1";
-const WORKSHOP_DATASET_VERSION = "2026-07-14-workshop-clean-prework";
+const STORAGE_KEY = "workspace-workshop-acordos-collab-v2";
+const WORKSHOP_DATASET_VERSION = "2026-07-14-workshop-clean-db-v2";
 const areas = ["Comercial", "Financeiro", "Fiscal", "Produto", "Tecnologia", "Dados", "CSC", "Jurídico / Compliance", "Outra"];
 const levels: Level[] = ["Baixo", "Médio", "Alto"];
 const activities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses", "priorizacao", "plano", "resumo"];
