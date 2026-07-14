@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -31,6 +31,7 @@ import { ProcessFlowDiagram, type ProcessFlowStep } from "./components/ProcessFl
 
 type View = "room" | "stages" | "hypotheses" | "prioritization" | "plans" | "summary" | "facilitation";
 type Activity = "fluxo" | "reforma" | "kdd" | "dados" | "hipoteses" | "priorizacao" | "plano" | "resumo";
+type WorkshopPhase = "abertura" | "validacao_manha" | "hipoteses_tarde" | "priorizacao" | "planos" | "resumo";
 type RoundStatus = "aberta" | "encerrada" | "em consolidação";
 type Level = "Baixo" | "Médio" | "Alto";
 type ParticipantStatus = "presente" | "ausente" | "facilitador" | "apoio";
@@ -237,6 +238,7 @@ interface Contribution {
 
 interface WorkshopState {
   activeView: View;
+  workspacePhase: WorkshopPhase;
   activeStageId: string;
   viewingStageId: string;
   activeActivity: Activity;
@@ -258,7 +260,15 @@ const LAST_PARTICIPANT_KEY = `${STORAGE_KEY}:last-participant`;
 const areas = ["Comercial", "Financeiro", "Fiscal", "Produto", "Tecnologia", "Dados", "CSC", "Jurídico / Compliance", "Outra"];
 const levels: Level[] = ["Baixo", "Médio", "Alto"];
 const activities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses", "priorizacao", "plano", "resumo"];
-const validationActivities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses"];
+const validationActivities: Activity[] = ["fluxo", "reforma", "kdd"];
+const phaseLabels: Record<WorkshopPhase, string> = {
+  abertura: "Abertura",
+  validacao_manha: "Validação manhã",
+  hipoteses_tarde: "Hipóteses tarde",
+  priorizacao: "Priorização",
+  planos: "Planos",
+  resumo: "Resumo",
+};
 const activityLabels: Record<Activity, string> = {
   fluxo: "Validar fluxo",
   reforma: "Reforma Tributária",
@@ -715,37 +725,64 @@ function supabaseHeaders(key: string, prefer?: string) {
   };
 }
 
-async function loadSupabaseState(): Promise<WorkshopState | null> {
+type SupabaseSnapshot = { state: WorkshopState; updatedAt: string };
+
+async function loadSupabaseState(): Promise<SupabaseSnapshot | null> {
   const config = supabaseConfig();
   if (!config) return null;
   try {
-    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state", limit: "1" });
+    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state,updated_at", limit: "1" });
     const response = await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?${params.toString()}`, { headers: supabaseHeaders(config.key) });
     if (!response.ok) return null;
-    const rows = await response.json() as Array<{ state?: WorkshopState }>;
-    return rows[0]?.state ?? null;
+    const rows = await response.json() as Array<{ state?: WorkshopState; updated_at?: string }>;
+    return rows[0]?.state ? { state: rows[0].state, updatedAt: rows[0].updated_at ?? "" } : null;
   } catch {
     return null;
   }
 }
 
+function sharedWorkshopState(state: WorkshopState): WorkshopState {
+  return { ...state, activeView: "room", viewingStageId: "", viewingActivity: "", highlightedItemId: "", currentParticipantId: "", persistence: "supabase" };
+}
+
+function applyRemoteWorkshopState(current: WorkshopState, remote: WorkshopState): WorkshopState {
+  const currentParticipantValue = current.participants.find((p) => p.id === current.currentParticipantId);
+  const hydrated = hydrateWorkshopState({ ...initialState(), ...remote, persistence: "supabase" });
+  const participants = currentParticipantValue && !hydrated.participants.some((p) => p.id === currentParticipantValue.id)
+    ? [currentParticipantValue, ...hydrated.participants]
+    : hydrated.participants;
+  return {
+    ...hydrated,
+    activeView: current.activeView,
+    viewingStageId: current.viewingStageId,
+    viewingActivity: current.viewingActivity,
+    highlightedItemId: current.highlightedItemId,
+    currentParticipantId: current.currentParticipantId,
+    participants,
+  };
+}
+
 async function syncSupabase(state: WorkshopState) {
   const config = supabaseConfig();
-  if (!config) return;
+  if (!config) return "";
+  const updatedAt = now();
   try {
     await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?on_conflict=id`, {
       method: "POST",
       headers: supabaseHeaders(config.key, "resolution=merge-duplicates,return=minimal"),
-      body: JSON.stringify([{ id: config.workshopId, state: { ...state, persistence: "supabase" }, updated_at: now() }]),
+      body: JSON.stringify([{ id: config.workshopId, state: sharedWorkshopState(state), updated_at: updatedAt }]),
     });
+    return updatedAt;
   } catch {
     // Mantém o fallback local sem interromper a facilitação.
+    return "";
   }
 }
 
 function initialState(): WorkshopState {
   return {
     activeView: "room",
+    workspacePhase: "abertura",
     activeStageId: "etapa-1",
     viewingStageId: "",
     activeActivity: "fluxo",
@@ -812,10 +849,11 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
 
   return {
     ...state,
+    workspacePhase: state.workspacePhase ?? "abertura",
     activeStageId: hasCurrentPrework ? state.activeStageId : "etapa-1",
     viewingStageId: state.viewingStageId && hydratedStages.some((stage) => stage.id === state.viewingStageId) ? state.viewingStageId : "",
-    activeActivity: hasCurrentPrework && validationActivities.includes(state.activeActivity) ? state.activeActivity : "fluxo",
-    viewingActivity: state.viewingActivity && validationActivities.includes(state.viewingActivity) ? state.viewingActivity : "",
+    activeActivity: hasCurrentPrework && activities.includes(state.activeActivity) ? state.activeActivity : "fluxo",
+    viewingActivity: state.viewingActivity && activities.includes(state.viewingActivity) ? state.viewingActivity : "",
     stages: hydratedStages,
     persistence: supabaseEnabled() ? "supabase" : "localStorage",
     datasetVersion: WORKSHOP_DATASET_VERSION,
@@ -823,6 +861,7 @@ function hydrateWorkshopState(state: WorkshopState): WorkshopState {
 }
 
 function useWorkshopState() {
+  const lastRemoteUpdatedAt = useRef("");
   const [state, setState] = useState<WorkshopState>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -835,9 +874,12 @@ function useWorkshopState() {
   useEffect(() => {
     if (!supabaseEnabled()) return;
     let cancelled = false;
-    void loadSupabaseState().then((remoteState) => {
+    void loadSupabaseState().then((remoteSnapshot) => {
       if (cancelled) return;
-      if (remoteState) setState(hydrateWorkshopState({ ...initialState(), ...remoteState, persistence: "supabase" }));
+      if (remoteSnapshot) {
+        lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+        setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
+      }
     }).finally(() => {
       if (!cancelled) setSupabaseHydrated(true);
     });
@@ -846,9 +888,22 @@ function useWorkshopState() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (!supabaseEnabled() || !supabaseHydrated) return;
-    const timeout = window.setTimeout(() => void syncSupabase(state), 650);
+    const timeout = window.setTimeout(() => void syncSupabase(state).then((updatedAt) => {
+      if (updatedAt) lastRemoteUpdatedAt.current = updatedAt;
+    }), 650);
     return () => window.clearTimeout(timeout);
   }, [state, supabaseHydrated]);
+  useEffect(() => {
+    if (!supabaseEnabled() || !supabaseHydrated) return;
+    const interval = window.setInterval(() => {
+      void loadSupabaseState().then((remoteSnapshot) => {
+        if (!remoteSnapshot || !remoteSnapshot.updatedAt || remoteSnapshot.updatedAt === lastRemoteUpdatedAt.current) return;
+        lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+        setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
+      });
+    }, 3500);
+    return () => window.clearInterval(interval);
+  }, [supabaseHydrated]);
   const updateStage = (stageId: string, fn: (stage: Stage) => Stage) => {
     setState((current) => ({ ...current, stages: current.stages.map((s) => (s.id === stageId ? normalizeStage(fn(s)) : s)) }));
   };
@@ -865,12 +920,10 @@ function normalizeStage(stage: Stage): Stage {
 function validationMissing(stage: Stage) {
   const flowReviewed = stage.flow.every((i) => i.status === "validado" || i.status === "pendência");
   const taxResolved = stage.taxImpact.status !== "não avaliado" || stage.pending.some((p) => p.includes("Reforma Tributária"));
-  const hypothesesResolved = stage.hypotheses.length > 0 || stage.offenders.length > 0 || stage.pending.some((p) => p.includes("sem hipótese"));
   return [
     !flowReviewed && "Confirmar todos os blocos do fluxo ou marcar pendência.",
     !taxResolved && "Avaliar Reforma Tributária ou registrar pendência obrigatória.",
     ["em validação", "em revisão"].includes(stage.kdd.status) && "Validar ou ajustar o KDD preliminar.",
-    !hypothesesResolved && "Criar hipóteses/ofensores ou marcar que não há hipótese no momento.",
   ].filter(Boolean) as string[];
 }
 
@@ -901,6 +954,18 @@ function stageIndex(state: WorkshopState) {
 }
 function activityIndex(activity: Activity) {
   const index = validationActivities.indexOf(activity);
+  return index >= 0 ? index : 0;
+}
+function phaseActivities(phase: WorkshopPhase): Activity[] {
+  if (phase === "hipoteses_tarde") return ["hipoteses", "priorizacao", "plano"];
+  if (phase === "priorizacao") return ["priorizacao", "plano"];
+  if (phase === "planos") return ["plano"];
+  if (phase === "resumo") return ["resumo"];
+  return validationActivities;
+}
+function phaseActivityIndex(phase: WorkshopPhase, activity: Activity) {
+  const list = phaseActivities(phase);
+  const index = list.indexOf(activity);
   return index >= 0 ? index : 0;
 }
 function isActivityComplete(stage: Stage, activity: Activity) {
@@ -939,6 +1004,11 @@ function stageChecklist(stage: Stage) {
 function nextValidationActivity(activity: Activity) {
   const index = activityIndex(activity);
   return validationActivities[Math.min(index + 1, validationActivities.length - 1)];
+}
+function nextPhaseActivity(phase: WorkshopPhase, activity: Activity) {
+  const list = phaseActivities(phase);
+  const index = Math.max(0, list.indexOf(activity));
+  return list[Math.min(index + 1, list.length - 1)] ?? activity;
 }
 function previousValidationActivity(activity: Activity) {
   const index = activityIndex(activity);
@@ -1155,7 +1225,8 @@ function AppShell({ state, setState, children }: { state: WorkshopState; setStat
   const p = currentParticipant(state)!;
   const stage = activeStage(state);
   const currentStagePosition = stageIndex(state) + 1;
-  const currentActivityPosition = activityIndex(state.activeActivity) + 1;
+  const availableActivities = phaseActivities(state.workspacePhase);
+  const currentActivityPosition = phaseActivityIndex(state.workspacePhase, state.activeActivity) + 1;
   const validatedStages = state.stages.filter((s) => s.status === "validada" || s.status === "com pendências").length;
   const nav: { key: View; label: string }[] = [
     { key: "room", label: "Sala do Workshop" },
@@ -1170,7 +1241,7 @@ function AppShell({ state, setState, children }: { state: WorkshopState; setStat
       <header className="sticky top-0 z-40 border-b border-[#D8D8D8] bg-white/95 backdrop-blur">
         <div className="mx-auto flex min-h-12 max-w-[1480px] flex-wrap items-center justify-between gap-2 px-4 py-1.5">
           <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-[#2D2A26] text-[#FFC629]"><Layers3 size={18} /></span><div><span className="block text-sm font-bold leading-tight">Workshop de Acordos</span><span className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#756F68]">{p.name} · {p.area} · {p.status === "facilitador" ? "Facilitadora" : "Participante"}</span></div></div>
-          <div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#EAEAEA] text-[#2D2A26]">Validação</Badge><Badge>{`${currentStagePosition}/6 ${stage.name}`}</Badge><Badge tone="bg-[#FFF4CC] text-[#6F5400]">{`${currentActivityPosition}/${validationActivities.length} ${activityShortLabels[state.activeActivity] ?? activityLabels[state.activeActivity]}`}</Badge><Badge tone="bg-[#E1F5E8] text-[#146B35]">{`${validatedStages}/6`}</Badge><SecondaryButton onClick={() => setState((s) => ({ ...s, currentParticipantId: "", activeView: "room" }))}>Sair</SecondaryButton></div>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#EAEAEA] text-[#2D2A26]">{phaseLabels[state.workspacePhase]}</Badge><Badge>{`${currentStagePosition}/6 ${stage.name}`}</Badge><Badge tone="bg-[#FFF4CC] text-[#6F5400]">{`${currentActivityPosition}/${availableActivities.length} ${activityShortLabels[state.activeActivity] ?? activityLabels[state.activeActivity]}`}</Badge><Badge tone="bg-[#E1F5E8] text-[#146B35]">{`${validatedStages}/6`}</Badge><SecondaryButton onClick={() => setState((s) => ({ ...s, currentParticipantId: "", activeView: "room" }))}>Sair</SecondaryButton></div>
         </div>
       </header>
       <nav className="border-b border-[#D8D8D8] bg-white"><div className="mx-auto flex max-w-[1480px] gap-2 overflow-x-auto px-4 py-1.5">{nav.map((n) => <MiniButton key={n.key} active={state.activeView === n.key} onClick={() => setState((s) => ({ ...s, activeView: n.key }))}>{n.label}</MiniButton>)}{p.status === "facilitador" && <MiniButton active={state.activeView === "facilitation"} onClick={() => setState((s) => ({ ...s, activeView: "facilitation" }))}><Settings2 size={14} />Facilitação</MiniButton>}</div></nav>
@@ -1191,7 +1262,7 @@ function EmptyState({ text }: { text: string }) {
 function NowPanel({ state }: { state: WorkshopState }) {
   const stage = visibleStage(state);
   const activity = visibleActivity(state);
-  return <section className="rounded-lg border border-[#D8D8D8] bg-[#FFF9E3] px-3 py-2 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#756F68]">Agora</span><h1 className="text-xl font-bold leading-tight">{activityLabels[activity]}</h1><Badge tone="bg-white text-[#54504A]">{stage.name}</Badge></div><div className="flex flex-wrap items-center gap-2"><Badge>{state.roundStatus}</Badge><span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white px-2.5 text-xs font-bold text-[#6F5400]"><Timer size={14} />{state.roundMinutes} min</span><Badge tone="bg-white text-[#2D2A26]">Ação: {expected(activity)}</Badge></div></div></section>;
+  return <section className="rounded-lg border border-[#D8D8D8] bg-[#FFF9E3] px-3 py-2 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex min-w-0 flex-wrap items-center gap-2"><span className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#756F68]">Agora</span><h1 className="text-xl font-bold leading-tight">{activityLabels[activity]}</h1><Badge tone="bg-white text-[#54504A]">{stage.name}</Badge><Badge tone="bg-[#EAEAEA] text-[#2D2A26]">{phaseLabels[state.workspacePhase]}</Badge></div><div className="flex flex-wrap items-center gap-2"><Badge>{state.roundStatus}</Badge><span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white px-2.5 text-xs font-bold text-[#6F5400]"><Timer size={14} />{state.roundMinutes} min</span><Badge tone="bg-white text-[#2D2A26]">Ação: {expected(activity)}</Badge></div></div></section>;
 }
 
 function ValidationNavigator({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
@@ -1200,22 +1271,26 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
   const officialStage = activeStage(state);
   const stage = canControl ? officialStage : visibleStage(state);
   const activity = canControl ? state.activeActivity : visibleActivity(state);
+  const availableActivities = phaseActivities(state.workspacePhase);
   const currentStageIndex = Math.max(0, state.stages.findIndex((s) => s.id === stage.id));
   const nextStage = state.stages[currentStageIndex + 1];
   const done = stageProgress(stage);
 
   const goActivity = (next: Activity) => setState((s) => canControl ? ({ ...s, activeActivity: next, activeView: "room" }) : ({ ...s, viewingActivity: next, activeView: "room" }));
-  const goStage = (stageId: string) => setState((s) => canControl ? ({ ...s, activeStageId: stageId, viewingStageId: "", viewingActivity: "", activeActivity: "fluxo", activeView: "room" }) : ({ ...s, viewingStageId: stageId, viewingActivity: "fluxo", activeView: "room" }));
+  const goStage = (stageId: string) => setState((s) => {
+    const firstActivity = phaseActivities(s.workspacePhase)[0] ?? "fluxo";
+    return canControl ? ({ ...s, activeStageId: stageId, viewingStageId: "", viewingActivity: "", activeActivity: firstActivity, activeView: "room" }) : ({ ...s, viewingStageId: stageId, viewingActivity: firstActivity, activeView: "room" });
+  });
   const finishStage = () => {
     const pending = validationMissing(stage);
     updateStage(stage.id, (s) => ({ ...s, status: pending.length ? "com pendências" : "validada" }));
-    if (nextStage) setState((s) => ({ ...s, activeStageId: nextStage.id, activeActivity: "fluxo", activeView: "room" }));
+    if (nextStage) setState((s) => ({ ...s, activeStageId: nextStage.id, activeActivity: phaseActivities(s.workspacePhase)[0] ?? "fluxo", activeView: "room" }));
   };
 
   return (
     <section className="grid gap-2 rounded-lg border border-[#D8D8D8] bg-white px-3 py-2 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2"><span className="text-sm font-bold">Etapas</span><Badge tone="bg-[#F6F6F4] text-[#54504A]">{done}/{validationActivities.length} atividades</Badge></div>
+        <div className="flex items-center gap-2"><span className="text-sm font-bold">Etapas</span><Badge tone="bg-[#F6F6F4] text-[#54504A]">{done}/{validationActivities.length} manhã</Badge></div>
         {!canControl && <SecondaryButton onClick={() => setState((s) => ({ ...s, activeView: "stages" }))}>Ver etapas</SecondaryButton>}
       </div>
       <div className="overflow-x-auto">
@@ -1225,7 +1300,7 @@ function ValidationNavigator({ state, setState, updateStage }: { state: Workshop
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 overflow-x-auto">
-          <div className="flex min-w-[620px] gap-1">{validationActivities.map((item, index) => <button key={item} type="button" onClick={() => goActivity(item)} className={`h-8 flex-1 rounded-md px-2 text-xs font-bold ${item === activity ? "bg-[#2D2A26] text-white" : item === state.activeActivity ? "bg-[#FFF4CC] text-[#6F5400]" : "bg-[#F6F6F4] text-[#54504A]"}`}><span className="mr-1 text-[10px] opacity-70">{index + 1}</span>{activityShortLabels[item]}</button>)}</div>
+          <div className="flex min-w-[620px] gap-1">{availableActivities.map((item, index) => <button key={item} type="button" onClick={() => goActivity(item)} className={`h-8 flex-1 rounded-md px-2 text-xs font-bold ${item === activity ? "bg-[#2D2A26] text-white" : item === state.activeActivity ? "bg-[#FFF4CC] text-[#6F5400]" : "bg-[#F6F6F4] text-[#54504A]"}`}><span className="mr-1 text-[10px] opacity-70">{index + 1}</span>{activityShortLabels[item] ?? activityLabels[item]}</button>)}</div>
         </div>
         {canControl && <div className="flex flex-wrap gap-1.5"><PrimaryButton onClick={finishStage}>Concluir etapa</PrimaryButton></div>}
       </div>
@@ -1263,13 +1338,14 @@ function ContextualContributionPanel({ state, setState, stage, updateStage }: { 
   const p = currentParticipant(state);
   if (!p) return null;
   const activity = visibleActivity(state);
+  const canCreateAfternoonItems = state.workspacePhase !== "validacao_manha" || p.status === "facilitador";
   const canAddPain = ["fluxo", "hipoteses"].includes(activity);
-  const canAddHypothesis = activity === "hipoteses";
-  const canAddOffender = activity === "hipoteses";
+  const canAddHypothesis = activity === "hipoteses" && canCreateAfternoonItems;
+  const canAddOffender = activity === "hipoteses" && canCreateAfternoonItems;
   const addPain = () => openModal({ title: "Adicionar dor", confirmLabel: "Adicionar", fields: [{ id: "text", label: "Texto da dor", multiline: true, required: true }], onSubmit: ({ text }) => addContribution(setState, state, { type: "dor", content: text, impact: "Médio" }) });
   const addHypothesis = () => openModal({ title: "Criar hipótese", message: "Use o formato: Se [ação], então [resultado], porque [evidência].", confirmLabel: "Criar", fields: [{ id: "text", label: "Hipótese", multiline: true, required: true }], onSubmit: ({ text }) => addContribution(setState, state, { type: "hipótese", content: text, impact: "Médio" }) });
   const addOffender = () => openModal({ title: "Adicionar ofensor", confirmLabel: "Adicionar", fields: [{ id: "text", label: "Ofensor identificado", multiline: true, required: true }], onSubmit: ({ text }) => { const offender: Offender = { id: id("offender"), stageId: stage.id, hypothesisId: "", type: "Processo", content: text, cause: "Causa provável registrada por participante", impact: "Médio", responsibleArea: p.area, status: "Sugerido", origin: "Workshop" }; updateStage(stage.id, (s) => ({ ...s, offenders: [offender, ...s.offenders] })); addContribution(setState, state, { type: "ofensor", content: text, impact: "Médio" }); } });
-  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Ações contextuais" subtitle={p.status === "facilitador" ? "Insumos rápidos da etapa." : "Registre insumos da discussão."} /><div className="mt-3 flex flex-wrap gap-2">{canAddPain && <SecondaryButton onClick={addPain}>Adicionar dor</SecondaryButton>}{canAddHypothesis && <SecondaryButton onClick={addHypothesis}><FlaskConical size={17} />Criar hipótese</SecondaryButton>}{canAddOffender && <SecondaryButton onClick={addOffender}>Adicionar ofensor</SecondaryButton>}{!canAddPain && !canAddHypothesis && !canAddOffender && <Badge tone="bg-[#F6F6F4] text-[#54504A]">Sem ação contextual</Badge>}</div></section>;
+  return <section className="rounded-lg border border-[#D8D8D8] bg-white p-3 shadow-sm"><SectionTitle title="Ações contextuais" subtitle={p.status === "facilitador" ? "Insumos rápidos da etapa." : "Registre insumos da discussão."} /><div className="mt-3 flex flex-wrap gap-2">{canAddPain && <SecondaryButton onClick={addPain}>Adicionar dor</SecondaryButton>}{canAddHypothesis && <SecondaryButton onClick={addHypothesis}><FlaskConical size={17} />Criar hipótese</SecondaryButton>}{canAddOffender && <SecondaryButton onClick={addOffender}>Adicionar ofensor</SecondaryButton>}{activity === "hipoteses" && !canCreateAfternoonItems && <Badge tone="bg-[#FFF4CC] text-[#6F5400]">Liberação à tarde</Badge>}{!canAddPain && !canAddHypothesis && !canAddOffender && <Badge tone="bg-[#F6F6F4] text-[#54504A]">Sem ação contextual</Badge>}</div></section>;
 }
 
 function Room({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
@@ -1605,11 +1681,13 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
   );
 }
 function TaxWork({ state, setState, stage, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+  const participant = currentParticipant(state);
+  const canEditTax = participant?.status === "facilitador";
   const patch = (tax: Partial<Stage["taxImpact"]>) => updateStage(stage.id, (s) => ({ ...s, taxImpact: { ...s.taxImpact, ...tax } }));
-  return <div className="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]"><section className="rounded-lg bg-[#FFF9E3] p-4"><h3 className="text-xl font-bold leading-7">A Reforma Tributária impacta esta etapa?</h3><div className="mt-4 grid gap-2">{taxAnswers.map((a) => <button key={a} type="button" onClick={() => { patch({ answer: a }); addContribution(setState, state, { type: "impacto de Reforma Tributária", content: a }); }} className={`rounded-md border px-3 py-3 text-left text-sm font-bold ${stage.taxImpact.answer === a ? "border-[#2D2A26] bg-white" : "border-[#D8D8D8] bg-[#FFFDF2]"}`}>{a}</button>)}</div></section><section className="grid content-start gap-3"><TaxField label="Impacto esperado" value={stage.taxImpact.expectedImpact} onChange={(v) => patch({ expectedImpact: v })} /><TaxField label="Obrigação fiscal/regulatória" value={stage.taxImpact.obligation} onChange={(v) => patch({ obligation: v })} /></section></div>;
+  return <div className="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]"><section className="rounded-lg bg-[#FFF9E3] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xl font-bold leading-7">A Reforma Tributária impacta esta etapa?</h3><Badge>{stage.taxImpact.status}</Badge></div><div className="mt-4 grid gap-2">{taxAnswers.map((a) => <button key={a} type="button" disabled={!canEditTax} onClick={() => { patch({ answer: a, status: "validado", validator: participant?.name ?? "Facilitadora", dependency: `Avaliado em ${new Date().toLocaleString("pt-BR")}` }); addContribution(setState, state, { type: "impacto de Reforma Tributária", content: a }); }} className={`rounded-md border px-3 py-3 text-left text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60 ${stage.taxImpact.answer === a ? "border-[#2D2A26] bg-white" : "border-[#D8D8D8] bg-[#FFFDF2]"}`}>{a}</button>)}</div>{!canEditTax && <p className="mt-3 text-xs font-bold text-[#756F68]">Somente a facilitadora altera a avaliação oficial.</p>}</section><section className="grid content-start gap-3"><TaxField label="Impacto esperado" value={stage.taxImpact.expectedImpact} onChange={(v) => patch({ expectedImpact: v, status: stage.taxImpact.answer !== "Não avaliado" ? "validado" : stage.taxImpact.status, validator: participant?.name ?? stage.taxImpact.validator })} disabled={!canEditTax} /><TaxField label="Obrigação fiscal/regulatória" value={stage.taxImpact.obligation} onChange={(v) => patch({ obligation: v, status: stage.taxImpact.answer !== "Não avaliado" ? "validado" : stage.taxImpact.status, validator: participant?.name ?? stage.taxImpact.validator })} disabled={!canEditTax} /></section></div>;
 }
-function TaxField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return <Field label={label}><textarea className={`${inputClass()} min-h-28 resize-y`} value={value} onChange={(e) => onChange(e.target.value)} /></Field>;
+function TaxField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return <Field label={label}><textarea className={`${inputClass(disabled)} min-h-28 resize-y`} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} /></Field>;
 }
 function KddWork({ state, setState, stage, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const canValidateKdd = currentParticipant(state)?.status === "facilitador";
@@ -1619,12 +1697,12 @@ function KddWork({ state, setState, stage, updateStage }: { state: WorkshopState
   const save = () => {
     const text = draft.trim();
     if (!text) return;
-    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, draft: text, final: s.kdd.status === "validado" ? text : s.kdd.final, status: s.kdd.status === "validado" ? "validado" : "em revisão" } }));
+    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, draft: text, final: s.kdd.status === "validado" ? text : s.kdd.final, status: s.kdd.status === "validado" ? "validado" : "em revisão", comments: [`Editado por ${currentParticipant(state)?.name ?? "Facilitadora"} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
     addContribution(setState, state, { type: "sugestão de KDD", content: `KDD editado: ${text}` });
     setEditing(false);
   };
   const validate = () => {
-    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, status: "validado", final: draft.trim() || s.kdd.final || s.kdd.draft, draft: draft.trim() || s.kdd.draft } }));
+    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, status: "validado", final: draft.trim() || s.kdd.final || s.kdd.draft, draft: draft.trim() || s.kdd.draft, comments: [`Validado por ${currentParticipant(state)?.name ?? "Facilitadora"} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
     addContribution(setState, state, { type: "comentário", content: "KDD preliminar validado" });
   };
   return <div className="grid gap-3"><section className="rounded-lg border-l-4 border-[#FFC629] bg-[#FFF9E3] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-bold uppercase tracking-[0.14em] text-[#756F68]">KDD preliminar</p><Badge>{stage.kdd.status}</Badge></div>{canValidateKdd && !editing && <button type="button" title="Editar KDD" onClick={() => setEditing(true)} className="grid h-8 w-8 place-items-center rounded-md border border-[#D8D8D8] bg-white text-[#756F68] hover:border-[#2D2A26] hover:text-[#2D2A26]"><Pencil size={15} /></button>}</div>{editing ? <div className="mt-3 grid gap-3"><textarea autoFocus className={`${inputClass()} min-h-36 resize-y text-lg font-bold leading-8`} value={draft} onChange={(event) => setDraft(event.target.value)} /><div className="flex flex-wrap gap-2"><PrimaryButton disabled={!draft.trim()} onClick={save}>Salvar KDD</PrimaryButton><SecondaryButton onClick={() => { setDraft(stage.kdd.final || stage.kdd.draft); setEditing(false); }}>Cancelar</SecondaryButton></div></div> : <p className="mt-3 text-2xl font-bold leading-9">{stage.kdd.final || stage.kdd.draft}</p>}</section>{canValidateKdd && <div className="flex flex-wrap gap-2"><PrimaryButton onClick={validate}><Check size={17} />Validar KDD</PrimaryButton></div>}</div>;
@@ -1677,6 +1755,7 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
   const openModal = useActionModal();
   const participant = currentParticipant(state);
   const [feedback, setFeedback] = useState("");
+  const canCreateAfternoonItems = state.workspacePhase !== "validacao_manha" || participant?.status === "facilitador";
   const sourceItems = allItems(stage);
   const kddText = stage.kdd.final || stage.kdd.draft;
   const sourceOptions = [{ label: "Sem item vinculado", value: "" }, ...sourceItems.map((item) => ({ label: (item.title || item.text).slice(0, 96), value: item.id }))];
@@ -1719,6 +1798,7 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
   });
   return (
     <div className="grid gap-4">
+      {state.workspacePhase === "validacao_manha" && <div className="rounded-md border border-[#F0DE9A] bg-[#FFFBEA] px-3 py-2 text-sm font-bold text-[#6F5400]">{participant?.status === "facilitador" ? "A fase oficial ainda é validação da manhã. Você pode preparar hipóteses se necessário." : "A criação de hipóteses e ofensores será feita na etapa da tarde."}</div>}
       <section className="rounded-lg border-l-4 border-[#FFC629] bg-[#FFF9E3] p-4">
         <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#756F68]">KDD da etapa</p>
         <p className="mt-2 text-xl font-bold leading-8 text-[#2D2A26]">{kddText}</p>
@@ -1728,8 +1808,8 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
         </div>
       </section>
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={createHypothesis} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-4 text-sm font-bold text-[#146B35] hover:border-[#146B35]"><FlaskConical size={17} />Criar hipótese</button>
-        <button type="button" onClick={createOffenderFromModal} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#F3C7C7] bg-[#FFF1F1] px-4 text-sm font-bold text-[#8A1F1F] hover:border-[#8A1F1F]"><AlertTriangle size={17} />Criar ofensor</button>
+        <button type="button" disabled={!canCreateAfternoonItems} onClick={createHypothesis} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-4 text-sm font-bold text-[#146B35] hover:border-[#146B35] disabled:cursor-not-allowed disabled:opacity-50"><FlaskConical size={17} />Criar hipótese</button>
+        <button type="button" disabled={!canCreateAfternoonItems} onClick={createOffenderFromModal} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#F3C7C7] bg-[#FFF1F1] px-4 text-sm font-bold text-[#8A1F1F] hover:border-[#8A1F1F] disabled:cursor-not-allowed disabled:opacity-50"><AlertTriangle size={17} />Criar ofensor</button>
         {feedback && <span className="inline-flex h-10 items-center rounded-md bg-[#E1F5E8] px-3 text-sm font-bold text-[#146B35]">{feedback}</span>}
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1980,6 +2060,22 @@ function ParticipantsPanel({ state }: { state: WorkshopState }) {
   const visible = state.participants.filter((p) => filter === "Todas" || p.area === filter);
   return <section className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><SectionTitle title="Presença e composição da sala" subtitle="Participantes, áreas representadas e status de presença." /><Badge>{state.participants.length} pessoas</Badge></div><div className="mt-4 flex flex-wrap gap-2"><MiniButton active={filter === "Todas"} onClick={() => setFilter("Todas")}>Todas</MiniButton>{areas.map((a) => <MiniButton key={a} active={filter === a} onClick={() => setFilter(a)}>{a}</MiniButton>)}</div><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visible.map((p) => <article key={p.id} className="rounded-lg bg-[#F6F6F4] p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-bold">{p.name}</h3><p className="text-sm text-[#5B5650]">{p.role || "Cargo não informado"}</p></div><Badge>{p.status}</Badge></div><p className="mt-2 text-xs font-bold text-[#756F68]">{p.area} · {p.workshopRole || "papel a definir"}</p></article>)}{!visible.length && <div className="md:col-span-2 xl:col-span-3"><EmptyState text="Nenhum participante cadastrado ainda." /></div>}</div></section>;
 }
+function MorningProgressPanel({ state }: { state: WorkshopState }) {
+  const statusTone = (done: boolean) => done ? "bg-[#E1F5E8] text-[#146B35]" : "bg-[#FFF4CC] text-[#6F5400]";
+  return (
+    <section className="mt-5 rounded-lg border border-[#D8D8D8] bg-[#FAFAF9] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2"><SectionTitle title="Fechamento da manhã" subtitle="Fluxo, Reforma Tributária e KDD por etapa." /><Badge tone="bg-white text-[#54504A]">{state.stages.filter((stage) => validationMissing(stage).length === 0).length}/6 fechadas</Badge></div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+        {state.stages.map((stage) => {
+          const flowDone = isActivityComplete(stage, "fluxo");
+          const taxDone = isActivityComplete(stage, "reforma");
+          const kddDone = isActivityComplete(stage, "kdd");
+          return <article key={stage.id} className="rounded-md border border-[#EAEAEA] bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">{stage.order}. {stage.name}</h3><Badge>{stage.status}</Badge></div><div className="mt-2 flex flex-wrap gap-1.5"><Badge tone={statusTone(flowDone)}>Fluxo: {flowDone ? "validado" : "pendente"}</Badge><Badge tone={statusTone(taxDone)}>Reforma: {taxDone ? "avaliada" : "não avaliada"}</Badge><Badge tone={statusTone(kddDone)}>KDD: {kddDone ? "validado" : stage.kdd.status}</Badge></div></article>;
+        })}
+      </div>
+    </section>
+  );
+}
 function Facilitation({ state, setState, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const openModal = useActionModal();
   const stage = activeStage(state);
@@ -1987,8 +2083,16 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
   const divergences = state.contributions.filter((c) => c.content.toLowerCase().includes("discord") || c.type === "pendência").length;
   const pending = state.contributions.filter((c) => c.status === "pendente de validação").length + state.stages.reduce((sum, s) => sum + s.pending.length, 0);
   const nextStageForFacilitation = state.stages[stageIndex(state) + 1];
-  const nextActivityForFacilitation = nextValidationActivity(state.activeActivity);
-  const advanceNow = () => setState((s) => validationActivities.includes(s.activeActivity) && s.activeActivity !== "hipoteses" ? ({ ...s, activeActivity: nextValidationActivity(s.activeActivity), activeView: "room" }) : nextStageForFacilitation ? ({ ...s, activeStageId: nextStageForFacilitation.id, activeActivity: "fluxo", activeView: "room" }) : ({ ...s, activeView: "summary" }));
+  const activePhaseActivities = phaseActivities(state.workspacePhase);
+  const nextActivityForFacilitation = nextPhaseActivity(state.workspacePhase, state.activeActivity);
+  const advanceNow = () => setState((s) => {
+    const list = phaseActivities(s.workspacePhase);
+    const currentIndex = list.indexOf(s.activeActivity);
+    if (currentIndex >= 0 && currentIndex < list.length - 1) return { ...s, activeActivity: list[currentIndex + 1], activeView: "room" };
+    const next = s.stages[Math.max(0, s.stages.findIndex((item) => item.id === s.activeStageId)) + 1];
+    return next ? { ...s, activeStageId: next.id, activeActivity: list[0] ?? "fluxo", activeView: "room" } : { ...s, activeView: "summary" };
+  });
+  const changePhase = (phase: WorkshopPhase) => setState((s) => ({ ...s, workspacePhase: phase, activeActivity: phaseActivities(phase)[0] ?? s.activeActivity, activeView: phase === "resumo" ? "summary" : "room" }));
   const missing = validationMissing(stage);
   const markValidated = () => {
     if (missing.length) {
@@ -2001,12 +2105,14 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
     <div className="grid gap-5">
       <section className="rounded-lg border border-[#D8D8D8] bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3"><SectionTitle title="Painel de facilitação" subtitle="Controle discreto da etapa ativa, atividade, rodada, consolidação e avanço do workshop." /><Badge>{state.roundStatus}</Badge></div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4"><Metric value={stage.name} label="etapa ativa" /><Metric value={activityLabels[state.activeActivity]} label="atividade ativa" /><Metric value={nextStageForFacilitation?.name ?? "Resumo final"} label="próxima etapa" /><Metric value={activityShortLabels[nextActivityForFacilitation]} label="próxima atividade" /><Metric value={String(newCount)} label="contribuições novas" /><Metric value={String(divergences)} label="divergências" /><Metric value={String(pending)} label="pendências" /></div>
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-4"><Metric value={phaseLabels[state.workspacePhase]} label="fase atual" /><Metric value={stage.name} label="etapa ativa" /><Metric value={activityLabels[state.activeActivity]} label="atividade ativa" /><Metric value={nextStageForFacilitation?.name ?? "Resumo final"} label="próxima etapa" /><Metric value={activityShortLabels[nextActivityForFacilitation] ?? activityLabels[nextActivityForFacilitation]} label="próxima atividade" /><Metric value={String(newCount)} label="contribuições novas" /><Metric value={String(divergences)} label="divergências" /><Metric value={String(pending)} label="pendências" /></div>
+        <div className="mt-5 grid gap-3 lg:grid-cols-4">
+          <Field label="Fase do workshop"><select className={inputClass()} value={state.workspacePhase} onChange={(e) => changePhase(e.target.value as WorkshopPhase)}>{(Object.keys(phaseLabels) as WorkshopPhase[]).map((phase) => <option key={phase} value={phase}>{phaseLabels[phase]}</option>)}</select></Field>
           <Field label="Etapa ativa"><select className={inputClass()} value={state.activeStageId} onChange={(e) => setState((s) => ({ ...s, activeStageId: e.target.value }))}>{state.stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-          <Field label="Atividade ativa"><select className={inputClass()} value={state.activeActivity} onChange={(e) => setState((s) => ({ ...s, activeActivity: e.target.value as Activity }))}>{activities.map((a) => <option key={a} value={a}>{activityLabels[a]}</option>)}</select></Field>
+          <Field label="Atividade ativa"><select className={inputClass()} value={state.activeActivity} onChange={(e) => setState((s) => ({ ...s, activeActivity: e.target.value as Activity }))}>{activePhaseActivities.map((a) => <option key={a} value={a}>{activityLabels[a]}</option>)}</select></Field>
           <Field label="Tempo da rodada"><input type="number" className={inputClass()} value={state.roundMinutes} onChange={(e) => setState((s) => ({ ...s, roundMinutes: Number(e.target.value) }))} /></Field>
         </div>
+        <MorningProgressPanel state={state} />
         {missing.length > 0 && <div className="mt-4 rounded-lg border border-[#F3C7C7] bg-[#FFF7F7] p-4"><h3 className="font-bold">Critérios pendentes para validar a etapa</h3><ul className="mt-2 grid gap-1 text-sm leading-6 text-[#5B5650]">{missing.map((m) => <li key={m}>{m}</li>)}</ul></div>}
         <div className="mt-4 flex flex-wrap gap-2">
           <PrimaryButton onClick={() => setState((s) => ({ ...s, roundStatus: "aberta" }))}>Abrir rodada</PrimaryButton>
@@ -2015,7 +2121,7 @@ function Facilitation({ state, setState, updateStage }: { state: WorkshopState; 
           <SecondaryButton disabled={missing.length > 0} onClick={markValidated}><CheckCircle2 size={17} />Marcar validado</SecondaryButton>
           <SecondaryButton onClick={() => updateStage(stage.id, (s) => ({ ...s, pending: ["Pendência marcada pela facilitação", ...s.pending] }))}><AlertTriangle size={17} />Marcar pendência</SecondaryButton>
           <PrimaryButton onClick={advanceNow}>Avançar agora</PrimaryButton>
-          <SecondaryButton onClick={() => setState((s) => ({ ...s, activeActivity: nextActivity(s.activeActivity) }))}>Avançar atividade</SecondaryButton>
+          <SecondaryButton onClick={() => setState((s) => ({ ...s, activeActivity: nextPhaseActivity(s.workspacePhase, s.activeActivity) }))}>Avançar atividade</SecondaryButton>
           <SecondaryButton onClick={() => setState((s) => ({ ...s, activeView: "summary" }))}><Download size={17} />Gerar resumo</SecondaryButton>
         </div>
       </section>
@@ -2077,7 +2183,7 @@ export default function WorkspaceWorkshopApp() {
     sessionStorage.setItem(workshopStartedKey(participant.id), "true");
     setWorkshopStarted(true);
     setState((current) => participant.status === "facilitador"
-      ? ({ ...current, activeView: "room", activeStageId: "etapa-1", activeActivity: "fluxo", viewingStageId: "", viewingActivity: "" })
+      ? ({ ...current, workspacePhase: "validacao_manha", activeView: "room", activeStageId: "etapa-1", activeActivity: "fluxo", viewingStageId: "", viewingActivity: "" })
       : ({ ...current, activeView: "room", viewingStageId: "etapa-1", viewingActivity: "fluxo" }));
   };
   if (!participant) return <ActionModalProvider><EntryScreen setState={setState} /></ActionModalProvider>;
