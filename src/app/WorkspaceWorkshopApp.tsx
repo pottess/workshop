@@ -716,6 +716,11 @@ function seedStageById(stageId: string) {
 
 const SUPABASE_SNAPSHOT_TABLE = "workshop_snapshots";
 const SUPABASE_WORKSHOP_ID = "workshop-acordos-2026-h2";
+// A anon key é pública por definição e pode estar no bundle do navegador.
+// O fallback evita que builds da Vercel sem env injetada silenciosamente
+// voltem ao localStorage e criem uma workspace diferente por participante.
+const SUPABASE_PUBLIC_URL = "https://flbsdwuxamkglrllckcz.supabase.co";
+const SUPABASE_PUBLIC_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsYnNkd3V4YW1rZ2xybGxja2N6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxNjc2OTIsImV4cCI6MjA3OTc0MzY5Mn0.CKF53T2z6Nk2wJqeHfFcjwoopwCriT1rDRZbqVQp50c";
 
 function supabaseEnabled() {
   return Boolean(supabaseConfig());
@@ -723,9 +728,8 @@ function supabaseEnabled() {
 
 function supabaseConfig() {
   const env = import.meta.env as Record<string, string | undefined>;
-  const url = env.VITE_SUPABASE_URL;
-  const key = env.VITE_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  const url = env.VITE_SUPABASE_URL || SUPABASE_PUBLIC_URL;
+  const key = env.VITE_SUPABASE_ANON_KEY || SUPABASE_PUBLIC_ANON_KEY;
   return { url: url.replace(/\/$/, ""), key, workshopId: env.VITE_SUPABASE_WORKSHOP_ID || SUPABASE_WORKSHOP_ID };
 }
 
