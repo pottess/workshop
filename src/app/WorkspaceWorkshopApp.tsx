@@ -1949,14 +1949,23 @@ function HypothesisWork({ state, setState, stage, updateStage }: { state: Worksh
   );
 }
 function HypothesisCard({ h, state, updateStage }: { h: Hypothesis; state: WorkshopState; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+  const openModal = useActionModal();
   const p = currentParticipant(state);
   const stage = state.stages.find((s) => s.id === h.stageId);
   const source = stage ? allItems(stage).find((item) => item.id === h.sourceId) : undefined;
   const votes = h.votes ?? {};
   const liked = !!p && votes[p.id] > 0;
   const likes = Object.values(votes).filter((value) => value > 0).length;
+  const canDelete = p?.status === "facilitador" || h.createdBy === p?.name;
   const toggleLike = () => { if (!p) return; updateStage(h.stageId, (s) => ({ ...s, hypotheses: s.hypotheses.map((x) => x.id === h.id ? { ...x, votes: { ...(x.votes ?? {}), [p.id]: liked ? 0 : 1 } } : x) })); };
-  return <article className="rounded-md border border-[#BFE6CB] bg-white p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Badge tone={statusStyle[h.priorityStatus] ?? "bg-[#E1F5E8] text-[#146B35]"}>{h.priorityStatus}</Badge><button type="button" onClick={toggleLike} className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs font-bold ${liked ? "border-[#146B35] bg-[#E1F5E8] text-[#146B35]" : "border-[#D8D8D8] bg-white text-[#54504A] hover:border-[#146B35]"}`}><ThumbsUp size={13} />Gostei {likes}</button></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{h.text}</p>{source && <p className="mt-2 line-clamp-2 rounded bg-[#F4FBF6] p-2 text-xs font-semibold leading-5 text-[#3F6B4E]">Vinculado: {source.title || source.text}</p>}<p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{h.createdBy || h.area || "Pré-work"} · {h.createdAt ? new Date(h.createdAt).toLocaleString("pt-BR") : "pré-work"}</p></article>;
+  const deleteHypothesis = () => openModal({
+    title: "Excluir hipótese?",
+    message: h.text,
+    confirmLabel: "Excluir",
+    tone: "danger",
+    onSubmit: () => updateStage(h.stageId, (s) => ({ ...s, hypotheses: s.hypotheses.filter((item) => item.id !== h.id), plans: s.plans.filter((plan) => plan.hypothesisId !== h.id) })),
+  });
+  return <article className="rounded-md border border-[#BFE6CB] bg-white p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Badge tone={statusStyle[h.priorityStatus] ?? "bg-[#E1F5E8] text-[#146B35]"}>{h.priorityStatus}</Badge><div className="flex flex-wrap gap-2"><button type="button" onClick={toggleLike} className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs font-bold ${liked ? "border-[#146B35] bg-[#E1F5E8] text-[#146B35]" : "border-[#D8D8D8] bg-white text-[#54504A] hover:border-[#146B35]"}`}><ThumbsUp size={13} />Gostei {likes}</button>{canDelete && <button type="button" title="Excluir hipótese" onClick={deleteHypothesis} className="grid h-8 w-8 place-items-center rounded-md border border-[#F3C7C7] bg-white text-[#8A1F1F] hover:border-[#8A1F1F]"><Trash2 size={14} /></button>}</div></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{h.text}</p>{source && <p className="mt-2 line-clamp-2 rounded bg-[#F4FBF6] p-2 text-xs font-semibold leading-5 text-[#3F6B4E]">Vinculado: {source.title || source.text}</p>}<p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{h.createdBy || h.area || "Pré-work"} · {h.createdAt ? new Date(h.createdAt).toLocaleString("pt-BR") : "pré-work"}</p></article>;
 }
 function OffenderCard({ offender }: { offender: Offender }) {
   return <article className="rounded-md border border-[#F3C7C7] bg-white p-3"><div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#FFE1E1] text-[#8A1F1F]">{offender.status ?? "Sugerido"}</Badge><Badge tone="bg-white text-[#8A1F1F]">Impacto {offender.impact}</Badge></div><p className="mt-2 text-sm font-bold leading-6 text-[#2D2A26]">{offender.content}</p><p className="mt-1 text-sm font-semibold leading-6 text-[#5B5650]">{offender.cause}</p><p className="mt-2 text-xs font-bold uppercase tracking-[0.1em] text-[#756F68]">{offender.createdBy || offender.responsibleArea || "Pré-work"} · {offender.createdAt ? new Date(offender.createdAt).toLocaleString("pt-BR") : offender.origin || "pré-work"}</p></article>;
@@ -2265,38 +2274,56 @@ function HypothesesView({ state, setState, updateStage }: { state: WorkshopState
   const openModal = useActionModal();
   const participant = currentParticipant(state);
   const active = activeStage(state);
-  const all = state.stages.flatMap((s) => s.hypotheses.map((h) => ({ s, h })));
+  const [selectedStageId, setSelectedStageId] = useState(active.id);
+  const selectedStage = state.stages.find((stage) => stage.id === selectedStageId) ?? active;
   const createHypothesis = () => openModal({
     title: "Nova hipótese",
-    message: `Etapa atual: ${active.name}`,
+    message: `Etapa atual: ${selectedStage.name}`,
     confirmLabel: "Salvar hipótese",
     fields: [
-      { id: "stageId", label: "Etapa", value: active.id, options: state.stages.map((stage) => ({ label: `${stage.order}. ${stage.name}`, value: stage.id })) },
+      { id: "stageId", label: "Etapa", value: selectedStage.id, options: state.stages.map((stage) => ({ label: `${stage.order}. ${stage.name}`, value: stage.id })) },
       { id: "action", label: "Se [ação ou mudança]", multiline: true, required: true },
       { id: "result", label: "Então [resultado esperado]", required: true },
       { id: "evidence", label: "Porque [evidência]", multiline: true, required: true },
     ],
     onSubmit: (values) => {
-      const targetStage = state.stages.find((stage) => stage.id === values.stageId) ?? active;
+      const targetStage = state.stages.find((stage) => stage.id === values.stageId) ?? selectedStage;
       const text = `Se ${values.action.trim()}, então ${values.result.trim()}, porque ${values.evidence.trim()}.`;
       const h: Hypothesis = { ...hypothesis(targetStage.id, "", "", participant?.area ?? "Workshop"), text, expectedResult: values.result.trim(), evidence: values.evidence.trim(), area: participant?.area ?? "Workshop", createdBy: participant?.name ?? "Workshop", createdAt: now() };
       updateStage(targetStage.id, (stage) => ({ ...stage, hypotheses: [h, ...stage.hypotheses] }));
       addContribution(setState, state, { type: "hipótese", content: text, impact: "Médio" });
+      setSelectedStageId(targetStage.id);
     },
   });
   return (
     <div className="grid gap-4">
       <section className="rounded-lg border border-[#D8D8D8] bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionTitle title="Hipóteses" subtitle="Crie e acompanhe hipóteses para qualquer etapa do workshop." />
+          <SectionTitle title="Hipóteses por etapa" subtitle="Crie, acompanhe e remova hipóteses por etapa do workshop." />
           <div className="flex flex-wrap gap-2">
-            <Badge tone="bg-[#FFF4CC] text-[#6F5400]">{active.name}</Badge>
+            <Badge tone="bg-[#FFF4CC] text-[#6F5400]">{selectedStage.name}</Badge>
             <PrimaryButton disabled={!participant} onClick={createHypothesis}><Plus size={17} />Criar hipótese</PrimaryButton>
           </div>
         </div>
       </section>
-      {all.map(({ s, h }) => <div key={h.id} className="grid gap-2"><Badge tone="bg-[#F6F6F4] text-[#54504A]">{s.name}</Badge><HypothesisCard h={h} state={state} updateStage={updateStage} /></div>)}
-      {!all.length && <EmptyState text="Nenhuma hipótese criada ainda. Clique em Criar hipótese para adicionar." />}
+      <div className="flex gap-2 overflow-x-auto rounded-lg border border-[#D8D8D8] bg-white p-2">
+        {state.stages.map((stage) => (
+          <button key={stage.id} type="button" onClick={() => setSelectedStageId(stage.id)} className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md px-3 text-sm font-bold transition ${stage.id === selectedStage.id ? "bg-[#2D2A26] text-white" : "border border-[#D8D8D8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"}`}>
+            <span>{stage.order}. {shortStageName(stage)}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs ${stage.id === selectedStage.id ? "bg-white/15 text-white" : "bg-[#F6F6F4] text-[#54504A]"}`}>{stage.hypotheses.length}</span>
+          </button>
+        ))}
+      </div>
+      <section className="rounded-lg border border-[#BFE6CB] bg-[#F4FBF6] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <SectionTitle title={selectedStage.name} subtitle="Hipóteses registradas nesta etapa." />
+          <Badge tone="bg-white text-[#54504A]">{selectedStage.hypotheses.length} hipóteses</Badge>
+        </div>
+        <div className="mt-3 grid gap-2">
+          {selectedStage.hypotheses.map((h) => <HypothesisCard key={h.id} h={h} state={state} updateStage={updateStage} />)}
+          {!selectedStage.hypotheses.length && <EmptyState text="Nenhuma hipótese criada para esta etapa. Clique em Criar hipótese para adicionar." />}
+        </div>
+      </section>
     </div>
   );
 }
