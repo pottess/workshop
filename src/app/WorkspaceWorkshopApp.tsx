@@ -264,9 +264,12 @@ interface WorkshopState {
   datasetVersion: string;
 }
 
+type SaveStatus = "carregando" | "salvando" | "salvo" | "erro" | "local";
+
 const STORAGE_KEY = "workspace-workshop-acordos-collab-v2";
 const WORKSHOP_DATASET_VERSION = "2026-07-14-workshop-clean-db-v2";
 const LAST_PARTICIPANT_KEY = `${STORAGE_KEY}:last-participant`;
+const SAFETY_BACKUP_KEY = `${STORAGE_KEY}:safety-backup`;
 const areas = ["Comercial", "Financeiro", "Fiscal", "Produto", "Tecnologia", "Dados", "CSC", "Jurídico / Compliance", "Outra"];
 const levels: Level[] = ["Baixo", "Médio", "Alto"];
 const activities: Activity[] = ["fluxo", "reforma", "kdd", "hipoteses", "priorizacao", "plano", "resumo"];
@@ -907,42 +910,17 @@ function withStageDefaults(stage: Stage): Stage {
 }
 
 function hydrateWorkshopState(state: WorkshopState): WorkshopState {
-  if (state.datasetVersion !== WORKSHOP_DATASET_VERSION) return initialState();
-  const hasCurrentStageOnePrework = state.stages.some((stage) => stage.id === "etapa-1" && stage.preworkVersion === PREWORK_STAGE_ONE_VERSION);
-  const hasCurrentStageTwoPrework = state.stages.some((stage) => stage.id === "etapa-2" && stage.preworkVersion === PREWORK_STAGE_TWO_VERSION);
-  const hasCurrentStageThreePrework = state.stages.some((stage) => stage.id === "etapa-3" && stage.preworkVersion === PREWORK_STAGE_THREE_VERSION);
-  const hasCurrentStageFourPrework = state.stages.some((stage) => stage.id === "etapa-4" && stage.preworkVersion === PREWORK_STAGE_FOUR_VERSION);
-  const hasCurrentStageFivePrework = state.stages.some((stage) => stage.id === "etapa-5" && stage.preworkVersion === PREWORK_STAGE_FIVE_VERSION);
-  const hasCurrentStageSixPrework = state.stages.some((stage) => stage.id === "etapa-6" && stage.preworkVersion === PREWORK_STAGE_SIX_VERSION);
-  const stages = state.stages.map((stage) => {
-    if (stage.id === "etapa-1" && !hasCurrentStageOnePrework) return seedStageById("etapa-1") ?? stage;
-    if (stage.id === "etapa-2" && !hasCurrentStageTwoPrework) return seedStageById("etapa-2") ?? stage;
-    if (stage.id === "etapa-3" && !hasCurrentStageThreePrework) return seedStageById("etapa-3") ?? stage;
-    if (stage.id === "etapa-4" && !hasCurrentStageFourPrework) return seedStageById("etapa-4") ?? stage;
-    if (stage.id === "etapa-5" && !hasCurrentStageFivePrework) return seedStageById("etapa-5") ?? stage;
-    if (stage.id === "etapa-6" && !hasCurrentStageSixPrework) return seedStageById("etapa-6") ?? stage;
-    return withStageDefaults(stage);
-  });
-  const hasStageOne = stages.some((stage) => stage.id === "etapa-1");
-  const withStageOne = hasStageOne ? stages : [seedStageById("etapa-1") ?? stageOnePrework, ...stages];
-  const hasStageTwo = withStageOne.some((stage) => stage.id === "etapa-2");
-  const withStageTwo = hasStageTwo ? withStageOne : [withStageOne[0], seedStageById("etapa-2") ?? stageTwoPrework, ...withStageOne.slice(1)];
-  const hasStageThree = withStageTwo.some((stage) => stage.id === "etapa-3");
-  const withStageThree = hasStageThree ? withStageTwo : [withStageTwo[0], withStageTwo[1], seedStageById("etapa-3") ?? stageThreePrework, ...withStageTwo.slice(2)];
-  const hasStageFour = withStageThree.some((stage) => stage.id === "etapa-4");
-  const withStageFour = hasStageFour ? withStageThree : [withStageThree[0], withStageThree[1], withStageThree[2], seedStageById("etapa-4") ?? stageFourPrework, ...withStageThree.slice(3)];
-  const hasStageFive = withStageFour.some((stage) => stage.id === "etapa-5");
-  const withStageFive = hasStageFive ? withStageFour : [withStageFour[0], withStageFour[1], withStageFour[2], withStageFour[3], seedStageById("etapa-5") ?? stageFivePrework, ...withStageFour.slice(4)];
-  const hasStageSix = withStageFive.some((stage) => stage.id === "etapa-6");
-  const hydratedStages = hasStageSix ? withStageFive : [withStageFive[0], withStageFive[1], withStageFive[2], withStageFive[3], withStageFive[4], seedStageById("etapa-6") ?? stageSixPrework, ...withStageFive.slice(5)];
-  const hasCurrentPrework = hasCurrentStageOnePrework && hasCurrentStageTwoPrework && hasCurrentStageThreePrework && hasCurrentStageFourPrework && hasCurrentStageFivePrework && hasCurrentStageSixPrework;
-
+  // Dados persistidos nunca podem ser invalidados por uma nova versão do bundle.
+  // Seeds são usados somente quando a workspace ainda não possui etapa alguma.
+  const persistedStages = Array.isArray(state.stages) ? state.stages : [];
+  const stages = persistedStages.length ? persistedStages.map(withStageDefaults) : seedStages.map(withStageDefaults);
+  const hydratedStages = stages;
   return {
     ...state,
     workspacePhase: state.workspacePhase ?? "abertura",
-    activeStageId: hasCurrentPrework ? state.activeStageId : "etapa-1",
+    activeStageId: hydratedStages.some((stage) => stage.id === state.activeStageId) ? state.activeStageId : hydratedStages[0]?.id ?? "etapa-1",
     viewingStageId: state.viewingStageId && hydratedStages.some((stage) => stage.id === state.viewingStageId) ? state.viewingStageId : "",
-    activeActivity: hasCurrentPrework && activities.includes(state.activeActivity) ? state.activeActivity : "fluxo",
+    activeActivity: activities.includes(state.activeActivity) ? state.activeActivity : "fluxo",
     viewingActivity: state.viewingActivity && activities.includes(state.viewingActivity) ? state.viewingActivity : "",
     stages: hydratedStages,
     persistence: supabaseEnabled() ? "supabase" : "localStorage",
@@ -966,21 +944,40 @@ function useWorkshopState() {
     }
   });
   const [supabaseHydrated, setSupabaseHydrated] = useState(!supabaseEnabled());
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>(supabaseEnabled() ? "carregando" : "local");
   useEffect(() => {
     if (!supabaseEnabled()) return;
     let cancelled = false;
     void loadSupabaseState().then((remoteSnapshot) => {
       if (cancelled) return;
+      const legacyRaw = localStorage.getItem(STORAGE_KEY);
+      const legacyState = legacyRaw ? hydrateWorkshopState(JSON.parse(legacyRaw) as WorkshopState) : null;
+      const safetyBackup = {
+        exportedAt: now(),
+        workspaceId: currentWorkspaceId(),
+        remote: remoteSnapshot,
+        browser: legacyState,
+      };
+      localStorage.setItem(SAFETY_BACKUP_KEY, JSON.stringify(safetyBackup));
       if (remoteSnapshot) {
         lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
         lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
         lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
         applyingRemoteState.current = true;
         writeAfterRemoteApply.current = false;
-        setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
+        // Backfill conservador: registros locais com ids novos são incorporados sem
+        // remover nem substituir registros que já existem no banco.
+        const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState) : remoteSnapshot.state;
+        writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
+        setState((current) => applyRemoteWorkshopState(current, backfilled));
+      } else if (legacyState) {
+        writeAfterRemoteApply.current = true;
+        setState((current) => applyRemoteWorkshopState(current, legacyState));
       }
     }).finally(() => {
-      if (!cancelled) setSupabaseHydrated(true);
+      if (!cancelled) { setSupabaseHydrated(true); setSaveStatus("salvo"); }
+    }).catch(() => {
+      if (!cancelled) setSaveStatus("erro");
     });
     return () => { cancelled = true; };
   }, []);
@@ -995,6 +992,7 @@ function useWorkshopState() {
     }
     applyingRemoteState.current = false;
     if (signature === lastPersistedSharedState.current && !writeAfterRemoteApply.current) return;
+    setSaveStatus("salvando");
     const timeout = window.setTimeout(() => void loadSupabaseState().then((remoteSnapshot) => {
       const merged = mergeWorkshopStates(lastRemoteState.current, remoteSnapshot?.state ?? null, state);
       return syncSupabase(merged).then((updatedAt) => ({ updatedAt, merged }));
@@ -1006,7 +1004,16 @@ function useWorkshopState() {
         writeAfterRemoteApply.current = false;
         applyingRemoteState.current = true;
         setState((current) => applyRemoteWorkshopState(current, merged));
+        setSaveStatus("salvo");
+      } else {
+        setSaveStatus("erro");
+        writeAfterRemoteApply.current = true;
+        window.setTimeout(() => setState((current) => ({ ...current })), 2000);
       }
+    }).catch(() => {
+      setSaveStatus("erro");
+      writeAfterRemoteApply.current = true;
+      window.setTimeout(() => setState((current) => ({ ...current })), 2000);
     }), 250);
     return () => window.clearTimeout(timeout);
   }, [state, supabaseHydrated]);
@@ -1034,7 +1041,45 @@ function useWorkshopState() {
     writeAfterRemoteApply.current = true;
     setState((current) => ({ ...current, stages: current.stages.map((s) => (s.id === stageId ? normalizeStage(fn(s)) : s)) }));
   };
-  return { state, setState, updateStage };
+  return { state, setState, updateStage, saveStatus };
+}
+
+function mergeBrowserOnlyRecords(remoteState: WorkshopState, browserState: WorkshopState): WorkshopState {
+  const remote = hydrateWorkshopState(remoteState);
+  const browser = hydrateWorkshopState(browserState);
+  const appendMissing = <T extends { id: string }>(databaseItems: T[], browserItems: T[]) => {
+    const databaseIds = new Set(databaseItems.map((item) => item.id));
+    return [...databaseItems, ...browserItems.filter((item) => !databaseIds.has(item.id))];
+  };
+  return {
+    ...remote,
+    participants: appendMissing(remote.participants, browser.participants),
+    contributions: appendMissing(remote.contributions, browser.contributions),
+    stages: remote.stages.map((stage) => {
+      const local = browser.stages.find((item) => item.id === stage.id);
+      if (!local) return stage;
+      const merged = { ...stage } as Stage;
+      stageArrayKeys.forEach((key) => {
+        const remoteItems = (stage as unknown as Record<string, Array<{ id: string }>>)[key] ?? [];
+        const browserItems = (local as unknown as Record<string, Array<{ id: string }>>)[key] ?? [];
+        (merged as unknown as Record<string, unknown>)[key] = appendMissing(remoteItems, browserItems);
+      });
+      return merged;
+    }),
+  };
+}
+
+function downloadSafetyBackup(state: WorkshopState) {
+  let stored: unknown = null;
+  try { stored = JSON.parse(localStorage.getItem(SAFETY_BACKUP_KEY) || "null"); } catch { stored = null; }
+  const payload = { exportedAt: now(), workspaceId: currentWorkspaceId(), current: sharedWorkshopState(state), startupBackup: stored };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `backup-${currentWorkspaceId()}-${new Date().toISOString().replaceAll(":", "-")}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function normalizeStage(stage: Stage): Stage {
@@ -1348,7 +1393,7 @@ function WorkshopOpening({ state, setState, onStart }: { state: WorkshopState; s
   );
 }
 
-function AppShell({ state, setState, children }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; children: React.ReactNode }) {
+function AppShell({ state, setState, saveStatus, children }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; saveStatus: SaveStatus; children: React.ReactNode }) {
   const p = currentParticipant(state)!;
   const stage = activeStage(state);
   const currentStagePosition = stageIndex(state) + 1;
@@ -1368,7 +1413,7 @@ function AppShell({ state, setState, children }: { state: WorkshopState; setStat
       <header className="sticky top-0 z-40 border-b border-[#D8D8D8] bg-white/95 backdrop-blur">
         <div className="mx-auto flex min-h-12 max-w-[1480px] flex-wrap items-center justify-between gap-2 px-4 py-1.5">
           <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-[#2D2A26] text-[#FFC629]"><Layers3 size={18} /></span><div><span className="block text-sm font-bold leading-tight">Workshop de Acordos</span><span className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#756F68]">{p.name} · {p.area} · {p.status === "facilitador" ? "Facilitadora" : "Participante"}</span></div></div>
-          <div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#EAEAEA] text-[#2D2A26]">{phaseLabels[state.workspacePhase]}</Badge><Badge>{`${currentStagePosition}/6 ${stage.name}`}</Badge><Badge tone="bg-[#FFF4CC] text-[#6F5400]">{`${currentActivityPosition}/${availableActivities.length} ${activityShortLabels[state.activeActivity] ?? activityLabels[state.activeActivity]}`}</Badge><Badge tone="bg-[#E1F5E8] text-[#146B35]">{`${validatedStages}/6`}</Badge><SecondaryButton onClick={() => setState((s) => ({ ...s, currentParticipantId: "", activeView: "room" }))}>Sair</SecondaryButton></div>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone="bg-[#EAEAEA] text-[#2D2A26]">{phaseLabels[state.workspacePhase]}</Badge><Badge>{`${currentStagePosition}/6 ${stage.name}`}</Badge><Badge tone="bg-[#FFF4CC] text-[#6F5400]">{`${currentActivityPosition}/${availableActivities.length} ${activityShortLabels[state.activeActivity] ?? activityLabels[state.activeActivity]}`}</Badge><Badge tone="bg-[#E1F5E8] text-[#146B35]">{`${validatedStages}/6`}</Badge><Badge tone={saveStatus === "erro" ? "bg-[#FFE1E1] text-[#8A1F1F]" : saveStatus === "salvando" || saveStatus === "carregando" ? "bg-[#FFF4CC] text-[#6F5400]" : "bg-[#E1F5E8] text-[#146B35]"}>{saveStatus === "local" ? "Salvo neste navegador" : saveStatus === "carregando" ? "Carregando…" : saveStatus === "salvando" ? "Salvando…" : saveStatus === "erro" ? "Erro ao salvar — tentando novamente" : "Salvo no banco"}</Badge>{p.status === "facilitador" && <SecondaryButton onClick={() => downloadSafetyBackup(state)}><FileJson size={16} />Backup</SecondaryButton>}<SecondaryButton onClick={() => setState((s) => ({ ...s, currentParticipantId: "", activeView: "room" }))}>Sair</SecondaryButton></div>
         </div>
       </header>
       <nav className="border-b border-[#D8D8D8] bg-white"><div className="mx-auto flex max-w-[1480px] gap-2 overflow-x-auto px-4 py-1.5">{nav.map((n) => <MiniButton key={n.key} active={state.activeView === n.key} onClick={() => setState((s) => ({ ...s, activeView: n.key }))}>{n.label}</MiniButton>)}{p.status === "facilitador" && <MiniButton active={state.activeView === "facilitation"} onClick={() => setState((s) => ({ ...s, activeView: "facilitation" }))}><Settings2 size={14} />Facilitação</MiniButton>}</div></nav>
@@ -2503,7 +2548,7 @@ function buildText(state: WorkshopState) {
 }
 
 export default function WorkspaceWorkshopApp() {
-  const { state, setState, updateStage } = useWorkshopState();
+  const { state, setState, updateStage, saveStatus } = useWorkshopState();
   const participant = currentParticipant(state);
   const [workshopStarted, setWorkshopStarted] = useState(false);
   useEffect(() => {
@@ -2523,5 +2568,5 @@ export default function WorkspaceWorkshopApp() {
   };
   if (!participant) return <ActionModalProvider><EntryScreen setState={setState} /></ActionModalProvider>;
   if (!workshopStarted) return <ActionModalProvider><WorkshopOpening state={state} setState={setState} onStart={startWorkshop} /></ActionModalProvider>;
-  return <ActionModalProvider><AppShell state={state} setState={setState}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
+  return <ActionModalProvider><AppShell state={state} setState={setState} saveStatus={saveStatus}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
 }
