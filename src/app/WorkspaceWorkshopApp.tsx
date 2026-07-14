@@ -1458,6 +1458,10 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
   const participant = currentParticipant(state);
   const [feedback, setFeedback] = useState("");
   const canManage = currentParticipant(state)?.status === "facilitador";
+  const simplifiedGroup = group === "pains" || group === "rules" || group === "needs";
+  const singularLabel = group === "pains" ? "dor" : group === "rules" ? "regra de negócio" : group === "needs" ? "necessidade" : group === "kpis" ? "KPI / meta" : "dúvida";
+  const successLabel = group === "pains" ? "Dor adicionada." : group === "rules" ? "Regra de negócio adicionada." : group === "needs" ? "Necessidade adicionada." : group === "kpis" ? "KPI / meta adicionado." : "Dúvida adicionada.";
+  const titleLabel = group === "pains" ? "Título da dor" : group === "rules" ? "Título da regra de negócio" : group === "needs" ? "Título da necessidade" : group === "openQuestions" ? "Título da dúvida" : "Nome do KPI ou meta";
   const theme = {
     red: { section: "border-[#E8C7C7] bg-[#FFF7F7]", card: "border-[#F0CFCF] bg-[#FFFDFD]", button: "border-[#E8C7C7]" },
     blue: { section: "border-[#BFD7F5] bg-[#F4F9FF]", card: "border-[#C8DDF7] bg-[#FCFDFF]", button: "border-[#BFD7F5]" },
@@ -1470,11 +1474,9 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
   };
   const addItem = () => {
     if (!participant) return;
-    const commonFields = [
-      { id: "title", label: group === "openQuestions" ? "Título da dúvida" : `Título de ${title.toLowerCase()}`, required: true },
+    const simpleFields = [
+      { id: "title", label: titleLabel, required: true },
       { id: "text", label: "Descrição", multiline: true, required: true },
-      { id: "area", label: group === "openQuestions" ? "Área relacionada" : "Área relacionada", value: participant.area },
-      { id: "impact", label: "Impacto", value: "Médio", options: levels.map((level) => ({ label: level, value: level })) },
       { id: "notes", label: "Observações", multiline: true },
     ];
     const fields = group === "kpis"
@@ -1495,9 +1497,9 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
             { id: "owner", label: "Responsável sugerido" },
             { id: "notes", label: "Observações", multiline: true },
           ]
-        : commonFields;
+        : simpleFields;
     openModal({
-      title: `Adicionar ${title.toLowerCase()}`,
+      title: `Adicionar ${singularLabel}`,
       confirmLabel: "Adicionar",
       fields,
       onSubmit: (values) => {
@@ -1524,33 +1526,41 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
         } else {
           updateStage(stage.id, (s) => ({ ...s, [group]: [work, ...s[group]] }));
         }
-        addContribution(setState, state, { type: contributionType, content: `${title} adicionado: ${work.title}`, relatedItemId: work.id, impact: work.impact });
-        showFeedback(`${title} adicionado.`);
+        addContribution(setState, state, { type: contributionType, content: `${singularLabel} adicionado: ${work.title}`, relatedItemId: work.id, impact: work.impact });
+        showFeedback(successLabel);
       },
     });
   };
   const editItem = (work: WorkItem) => {
     openModal({
-      title: `Editar ${title.toLowerCase()}`,
+      title: `Editar ${singularLabel}`,
       confirmLabel: "Salvar",
-      fields: [
-        { id: "title", label: "Título", value: work.title ?? "" },
-        { id: "text", label: "Descrição", value: work.text, multiline: true, required: true },
-        { id: "area", label: "Origem / área", value: work.area },
-      ],
-      onSubmit: ({ title: itemTitle, text, area }) => {
+      fields: simplifiedGroup
+        ? [
+            { id: "title", label: titleLabel, value: work.title ?? "", required: true },
+            { id: "text", label: "Descrição", value: work.text, multiline: true, required: true },
+            { id: "notes", label: "Observações", value: work.comments?.join(" · ") ?? "", multiline: true },
+          ]
+        : [
+            { id: "title", label: "Título", value: work.title ?? "" },
+            { id: "text", label: "Descrição", value: work.text, multiline: true, required: true },
+            { id: "area", label: "Origem / área", value: work.area },
+          ],
+      onSubmit: ({ title: itemTitle, text, area, notes }) => {
         if (group === "kpis") {
           updateStage(stage.id, (s) => ({ ...s, kpiItems: (s.kpiItems ?? []).map((item) => item.id === work.id ? { ...item, title: itemTitle.trim() || undefined, text: text.trim(), area: area.trim() || work.area, status: "em revisão", updatedAt: now() } : item) }));
+        } else if (simplifiedGroup) {
+          patchWorkItem(updateStage, stage, group, work.id, { title: itemTitle.trim() || undefined, text: text.trim(), comments: notes?.trim() ? [notes.trim()] : [], status: "em revisão", updatedAt: now() });
         } else {
           patchWorkItem(updateStage, stage, group, work.id, { title: itemTitle.trim() || undefined, text: text.trim(), area: area.trim() || work.area, status: "em revisão", updatedAt: now() });
         }
-        addContribution(setState, state, { type: contributionType, content: `${title} editado: ${text.trim()}`, relatedItemId: work.id, impact: work.impact });
+        addContribution(setState, state, { type: contributionType, content: `${singularLabel} editado: ${text.trim()}`, relatedItemId: work.id, impact: work.impact });
       },
     });
   };
   const deleteItem = (work: WorkItem) => {
     openModal({
-      title: `Excluir ${title.toLowerCase()}?`,
+      title: `Excluir ${singularLabel}?`,
       message: work.title ?? work.text,
       confirmLabel: "Excluir",
       tone: "danger",
@@ -1560,7 +1570,7 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
         } else {
           updateStage(stage.id, (s) => ({ ...s, [group]: s[group].filter((item) => item.id !== work.id) }));
         }
-        addContribution(setState, state, { type: "comentário", content: `${title} excluído: ${work.title ?? work.text}`, relatedItemId: work.id, impact: work.impact });
+        addContribution(setState, state, { type: "comentário", content: `${singularLabel} excluído: ${work.title ?? work.text}`, relatedItemId: work.id, impact: work.impact });
       },
     });
   };
@@ -1572,20 +1582,20 @@ function CompactWorkItemSection({ title, tone, group, items, contributionType, s
           <h3 className="text-base font-bold">{title}</h3>
           <p className="text-xs text-[#756F68]">{items.length ? `${items.length} registrados` : "Não informado no pré-work."}</p>
         </div>
-        <button type="button" title={`Adicionar ${title.toLowerCase()}`} onClick={addItem} className={`grid h-8 w-8 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Plus size={16} /></button>
+        <button type="button" title={`Adicionar ${singularLabel}`} onClick={addItem} className={`grid h-8 w-8 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Plus size={16} /></button>
       </div>
       {feedback && <div className="mt-2 inline-flex min-h-7 items-center rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-2 text-xs font-bold text-[#146B35]">{feedback}</div>}
       <div className="mt-2 grid auto-rows-auto items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
         {items.map((work) => (
           <article key={work.id} className={`grid h-auto min-h-[94px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-md border px-3 py-2 ${theme.card}`}>
             <div className="min-w-0 flex-1">
-              <div className="mb-1 flex flex-wrap gap-1.5"><Badge>{work.status}</Badge>{group !== "openQuestions" && <Badge tone="bg-white text-[#54504A]">Impacto {work.impact}</Badge>}{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>
+              {!simplifiedGroup && <div className="mb-1 flex flex-wrap gap-1.5"><Badge>{work.status}</Badge>{group !== "openQuestions" && <Badge tone="bg-white text-[#54504A]">Impacto {work.impact}</Badge>}{work.area && <Badge tone="bg-white text-[#54504A]">{work.area}</Badge>}</div>}
               <p className="whitespace-normal break-words text-sm font-bold leading-5">{work.title || work.text}</p>
               {work.title && <p className="mt-0.5 whitespace-normal break-words text-xs font-semibold leading-5 text-[#5B5650]">{work.text}</p>}
             </div>
             {canManage && <div className="flex shrink-0 items-start gap-1">
-              <button type="button" title={`Editar ${title.toLowerCase()}`} onClick={() => editItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Pencil size={14} /></button>
-              <button type="button" title={`Excluir ${title.toLowerCase()}`} onClick={() => deleteItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#8A1F1F] hover:border-[#8A1F1F] ${theme.button}`}><Trash2 size={14} /></button>
+              <button type="button" title={`Editar ${singularLabel}`} onClick={() => editItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#2D2A26] hover:border-[#2D2A26] ${theme.button}`}><Pencil size={14} /></button>
+              <button type="button" title={`Excluir ${singularLabel}`} onClick={() => deleteItem(work)} className={`grid h-7 w-7 place-items-center rounded-md border bg-white text-[#8A1F1F] hover:border-[#8A1F1F] ${theme.button}`}><Trash2 size={14} /></button>
             </div>}
           </article>
         ))}
