@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createClient, type RealtimeChannel } from "@supabase/supabase-js";
 import {
   AlertTriangle,
   BarChart3,
@@ -746,6 +747,14 @@ function supabaseHeaders(key: string, prefer?: string) {
   };
 }
 
+function createWorkshopRealtimeClient() {
+  const config = supabaseConfig();
+  return createClient(config.url, config.key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    realtime: { params: { eventsPerSecond: 10 } },
+  });
+}
+
 type SupabaseSnapshot = { state: WorkshopState; updatedAt: string };
 const stageArrayKeys = ["flow", "taxImpacts", "taxObligations", "taxNeeds", "kpiItems", "pains", "rules", "needs", "openQuestions", "hypotheses", "offenders", "plans"] as const;
 
@@ -938,6 +947,7 @@ function useWorkshopState() {
   const lastRemoteState = useRef<WorkshopState | null>(null);
   const applyingRemoteState = useRef(false);
   const writeAfterRemoteApply = useRef(false);
+  const realtimeChannel = useRef<RealtimeChannel | null>(null);
   const [state, setState] = useState<WorkshopState>(() => {
     try {
       if (supabaseEnabled()) return initialState();
@@ -1009,6 +1019,11 @@ function useWorkshopState() {
         applyingRemoteState.current = true;
         setState((current) => applyRemoteWorkshopState(current, merged));
         setSaveStatus("salvo");
+        void realtimeChannel.current?.send({
+          type: "broadcast",
+          event: "workshop_state",
+          payload: { state: sharedWorkshopState(merged), updatedAt },
+        });
       } else {
         setSaveStatus("erro");
         writeAfterRemoteApply.current = true;
@@ -1021,6 +1036,41 @@ function useWorkshopState() {
     }), 250);
     return () => window.clearTimeout(timeout);
   }, [state, supabaseHydrated]);
+  useEffect(() => {
+    if (!supabaseEnabled() || !supabaseHydrated) return;
+    const client = createWorkshopRealtimeClient();
+    const applyRealtimeState = (remoteState: WorkshopState, updatedAt = "") => {
+      const signature = sharedWorkshopSignature(remoteState);
+      if (signature === lastPersistedSharedState.current) return;
+      lastRemoteUpdatedAt.current = updatedAt;
+      lastPersistedSharedState.current = signature;
+      lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteState, persistence: "supabase" });
+      applyingRemoteState.current = true;
+      writeAfterRemoteApply.current = false;
+      setState((current) => applyRemoteWorkshopState(current, remoteState));
+    };
+    const channel = client
+      .channel(`workshop:${currentWorkspaceId()}`, { config: { broadcast: { self: false } } })
+      .on("broadcast", { event: "workshop_state" }, ({ payload }) => {
+        const message = payload as { state?: WorkshopState; updatedAt?: string };
+        if (message.state) applyRealtimeState(message.state, message.updatedAt);
+      })
+      .on("postgres_changes", {
+        event: "UPDATE",
+        schema: "public",
+        table: SUPABASE_SNAPSHOT_TABLE,
+        filter: `id=eq.${currentWorkspaceId()}`,
+      }, (payload) => {
+        const row = payload.new as { state?: WorkshopState; updated_at?: string };
+        if (row.state) applyRealtimeState(row.state, row.updated_at);
+      })
+      .subscribe();
+    realtimeChannel.current = channel;
+    return () => {
+      realtimeChannel.current = null;
+      void client.removeChannel(channel);
+    };
+  }, [supabaseHydrated]);
   useEffect(() => {
     if (!supabaseEnabled() || !supabaseHydrated) return;
     const interval = window.setInterval(() => {
@@ -1038,7 +1088,7 @@ function useWorkshopState() {
         writeAfterRemoteApply.current = false;
         setState((current) => applyRemoteWorkshopState(current, remoteSnapshot.state));
       });
-    }, 1200);
+    }, 10000);
     return () => window.clearInterval(interval);
   }, [supabaseHydrated]);
   const updateStage = (stageId: string, fn: (stage: Stage) => Stage) => {
