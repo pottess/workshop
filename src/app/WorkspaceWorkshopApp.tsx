@@ -54,6 +54,10 @@ interface Participant {
 
 interface WorkItem {
   id: string;
+  workspaceId?: string;
+  stageId?: string;
+  activityKey?: string;
+  type?: string;
   title?: string;
   text: string;
   description?: string;
@@ -67,6 +71,7 @@ interface WorkItem {
   note?: string;
   order?: number;
   createdBy?: string;
+  updatedBy?: string;
   createdAt?: string;
   updatedAt?: string;
   impact: Level;
@@ -204,8 +209,13 @@ interface Stage {
     existingPain: string;
     validator: string;
     dependency: string;
+    updatedBy?: string;
+    updatedAt?: string;
     status: "não avaliado" | "validado" | "pendência fiscal" | "dependência técnica";
   };
+  taxImpacts?: WorkItem[];
+  taxObligations?: WorkItem[];
+  taxNeeds?: WorkItem[];
   kdd: { draft: string; final: string; suggestions: string[]; comments: string[]; status: "em validação" | "em revisão" | "validado" | "pendente" };
   kpis: { status: string; message: string; items: string[] };
   kpiItems?: WorkItem[];
@@ -716,6 +726,10 @@ function supabaseConfig() {
   return { url: url.replace(/\/$/, ""), key, workshopId: env.VITE_SUPABASE_WORKSHOP_ID || SUPABASE_WORKSHOP_ID };
 }
 
+function currentWorkspaceId() {
+  return supabaseConfig()?.workshopId || SUPABASE_WORKSHOP_ID;
+}
+
 function supabaseHeaders(key: string, prefer?: string) {
   return {
     apikey: key,
@@ -800,10 +814,15 @@ function initialState(): WorkshopState {
 }
 
 function withStageDefaults(stage: Stage): Stage {
+  const taxImpacts = stage.taxImpacts ?? (stage.taxImpact?.expectedImpact ? [preworkItem(`${stage.id}-tax-impact-legacy`, "Impacto registrado", stage.taxImpact.expectedImpact, "Fiscal", "Médio", { origin: "Workshop", status: "em revisão" })] : []);
+  const taxObligations = stage.taxObligations ?? (stage.taxImpact?.obligation ? [preworkItem(`${stage.id}-tax-obligation-legacy`, "Obrigação registrada", stage.taxImpact.obligation, "Fiscal", "Médio", { origin: "Workshop", status: "em revisão" })] : []);
   return {
     ...stage,
     kpis: stage.kpis ?? { status: "", message: "", items: [] },
     kpiItems: stage.kpiItems ?? [],
+    taxImpacts,
+    taxObligations,
+    taxNeeds: stage.taxNeeds ?? [],
     openQuestions: stage.openQuestions ?? [],
     flow: stage.flow ?? [],
     pains: stage.pains ?? [],
@@ -1684,10 +1703,86 @@ function TaxWork({ state, setState, stage, updateStage }: { state: WorkshopState
   const participant = currentParticipant(state);
   const canEditTax = participant?.status === "facilitador";
   const patch = (tax: Partial<Stage["taxImpact"]>) => updateStage(stage.id, (s) => ({ ...s, taxImpact: { ...s.taxImpact, ...tax } }));
-  return <div className="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]"><section className="rounded-lg bg-[#FFF9E3] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xl font-bold leading-7">A Reforma Tributária impacta esta etapa?</h3><Badge>{stage.taxImpact.status}</Badge></div><div className="mt-4 grid gap-2">{taxAnswers.map((a) => <button key={a} type="button" disabled={!canEditTax} onClick={() => { patch({ answer: a, status: "validado", validator: participant?.name ?? "Facilitadora", dependency: `Avaliado em ${new Date().toLocaleString("pt-BR")}` }); addContribution(setState, state, { type: "impacto de Reforma Tributária", content: a }); }} className={`rounded-md border px-3 py-3 text-left text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60 ${stage.taxImpact.answer === a ? "border-[#2D2A26] bg-white" : "border-[#D8D8D8] bg-[#FFFDF2]"}`}>{a}</button>)}</div>{!canEditTax && <p className="mt-3 text-xs font-bold text-[#756F68]">Somente a facilitadora altera a avaliação oficial.</p>}</section><section className="grid content-start gap-3"><TaxField label="Impacto esperado" value={stage.taxImpact.expectedImpact} onChange={(v) => patch({ expectedImpact: v, status: stage.taxImpact.answer !== "Não avaliado" ? "validado" : stage.taxImpact.status, validator: participant?.name ?? stage.taxImpact.validator })} disabled={!canEditTax} /><TaxField label="Obrigação fiscal/regulatória" value={stage.taxImpact.obligation} onChange={(v) => patch({ obligation: v, status: stage.taxImpact.answer !== "Não avaliado" ? "validado" : stage.taxImpact.status, validator: participant?.name ?? stage.taxImpact.validator })} disabled={!canEditTax} /></section></div>;
+  return (
+    <div className="grid gap-3">
+      <section className="rounded-lg bg-[#FFF9E3] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xl font-bold leading-7">A Reforma Tributária impacta esta etapa?</h3><Badge>{stage.taxImpact.status}</Badge></div>
+        <div className="mt-4 grid gap-2 md:grid-cols-3">{taxAnswers.map((a) => <button key={a} type="button" disabled={!canEditTax} onClick={() => { const timestamp = now(); patch({ answer: a, status: "validado", validator: participant?.name ?? "Facilitadora", updatedBy: participant?.name ?? "Facilitadora", updatedAt: timestamp, dependency: `Avaliado em ${new Date().toLocaleString("pt-BR")}` }); addContribution(setState, state, { type: "impacto de Reforma Tributária", content: a }); }} className={`rounded-md border px-3 py-3 text-left text-sm font-bold disabled:cursor-not-allowed disabled:opacity-60 ${stage.taxImpact.answer === a ? "border-[#2D2A26] bg-white" : "border-[#D8D8D8] bg-[#FFFDF2]"}`}>{a}</button>)}</div>
+        {!canEditTax && <p className="mt-3 text-xs font-bold text-[#756F68]">Somente a facilitadora altera a resposta oficial.</p>}
+      </section>
+      <TaxItemSection title="Impactos" singular="impacto" titleLabel="Título do impacto" empty="Nenhum impacto registrado ainda." group="taxImpacts" items={stage.taxImpacts ?? []} state={state} setState={setState} stage={stage} updateStage={updateStage} />
+      <TaxItemSection title="Obrigações fiscais/regulatórias" singular="obrigação fiscal/regulatória" titleLabel="Título da obrigação" empty="Nenhuma obrigação registrada ainda." group="taxObligations" items={stage.taxObligations ?? []} state={state} setState={setState} stage={stage} updateStage={updateStage} />
+      <TaxItemSection title="Necessidades" singular="necessidade" titleLabel="Título da necessidade" empty="Nenhuma necessidade registrada ainda." group="taxNeeds" items={stage.taxNeeds ?? []} state={state} setState={setState} stage={stage} updateStage={updateStage} />
+    </div>
+  );
 }
-function TaxField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
-  return <Field label={label}><textarea className={`${inputClass(disabled)} min-h-28 resize-y`} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} /></Field>;
+
+type TaxItemGroup = "taxImpacts" | "taxObligations" | "taxNeeds";
+function TaxItemSection({ title, singular, titleLabel, empty, group, items, state, setState, stage, updateStage }: { title: string; singular: string; titleLabel: string; empty: string; group: TaxItemGroup; items: WorkItem[]; state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
+  const openModal = useActionModal();
+  const participant = currentParticipant(state);
+  const canManage = participant?.status === "facilitador";
+  const [feedback, setFeedback] = useState("");
+  const itemType = group === "taxImpacts" ? "reforma_impacto" : group === "taxObligations" ? "reforma_obrigacao" : "reforma_necessidade";
+  const showFeedback = (message: string) => { setFeedback(message); window.setTimeout(() => setFeedback(""), 2400); };
+  const syncTaxSummary = (nextItems: WorkItem[], nextStage: Stage): Stage => {
+    if (group === "taxImpacts") return { ...nextStage, taxImpact: { ...nextStage.taxImpact, expectedImpact: nextItems.map((item) => item.text).join("\n\n") } };
+    if (group === "taxObligations") return { ...nextStage, taxImpact: { ...nextStage.taxImpact, obligation: nextItems.map((item) => item.text).join("\n\n") } };
+    return nextStage;
+  };
+  const saveItems = (nextItems: WorkItem[]) => updateStage(stage.id, (s) => syncTaxSummary(nextItems, { ...s, [group]: nextItems }));
+  const fields = (work?: WorkItem) => [
+    { id: "title", label: titleLabel, value: work?.title ?? "", required: true },
+    { id: "text", label: "Descrição", value: work?.text ?? "", multiline: true, required: true },
+    { id: "notes", label: "Observações", value: work?.comments?.join(" · ") ?? "", multiline: true },
+  ];
+  const addItem = () => {
+    if (!participant) return;
+    openModal({
+      title: `Adicionar ${singular}`,
+      confirmLabel: `Salvar ${singular.split("/")[0]}`,
+      fields: fields(),
+      onSubmit: ({ title: itemTitle, text, notes }) => {
+        const timestamp = now();
+        const work = preworkItem(id(group), itemTitle.trim(), text.trim(), participant.area || "Fiscal", "Médio", { workspaceId: currentWorkspaceId(), stageId: stage.id, activityKey: "reforma_tributaria", type: itemType, origin: "Workshop", status: "em validação", comments: notes?.trim() ? [notes.trim()] : [], createdBy: participant.name, updatedBy: participant.name, createdAt: timestamp, updatedAt: timestamp });
+        saveItems([work, ...items]);
+        addContribution(setState, state, { type: "impacto de Reforma Tributária", content: `${singular} registrado: ${work.title}`, relatedItemId: work.id });
+        showFeedback(`${title} atualizado.`);
+      },
+    });
+  };
+  const editItem = (work: WorkItem) => openModal({
+    title: `Editar ${singular}`,
+    confirmLabel: "Salvar",
+    fields: fields(work),
+    onSubmit: ({ title: itemTitle, text, notes }) => {
+      const nextItems = items.map((item) => item.id === work.id ? { ...item, workspaceId: item.workspaceId ?? currentWorkspaceId(), stageId: item.stageId ?? stage.id, activityKey: "reforma_tributaria", type: item.type ?? itemType, title: itemTitle.trim(), text: text.trim(), comments: notes?.trim() ? [notes.trim()] : [], updatedBy: participant?.name, updatedAt: now(), status: "em revisão" as WorkItem["status"] } : item);
+      saveItems(nextItems);
+      addContribution(setState, state, { type: "impacto de Reforma Tributária", content: `${singular} editado: ${itemTitle.trim()}`, relatedItemId: work.id });
+      showFeedback(`${title} atualizado.`);
+    },
+  });
+  const deleteItem = (work: WorkItem) => openModal({
+    title: "Tem certeza que deseja excluir este item?",
+    message: work.title ?? work.text,
+    confirmLabel: "Excluir",
+    tone: "danger",
+    onSubmit: () => {
+      saveItems(items.filter((item) => item.id !== work.id));
+      addContribution(setState, state, { type: "comentário", content: `${singular} excluído: ${work.title ?? work.text}`, relatedItemId: work.id });
+      showFeedback("Item excluído.");
+    },
+  });
+  return (
+    <section className="rounded-lg border border-[#E7D8A8] bg-[#FFFBEA] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-bold">{title}</h3><p className="text-xs text-[#756F68]">{items.length ? `${items.length} registros` : empty}</p></div>{participant && <button type="button" title={`Adicionar ${singular}`} onClick={addItem} className="grid h-8 w-8 place-items-center rounded-md border border-[#E7D8A8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"><Plus size={16} /></button>}</div>
+      {feedback && <div className="mt-2 inline-flex min-h-7 items-center rounded-md border border-[#BFE6CB] bg-[#E1F5E8] px-2 text-xs font-bold text-[#146B35]">{feedback}</div>}
+      <div className="mt-2 grid auto-rows-auto items-start gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {items.map((work) => <article key={work.id} className="grid h-auto min-h-[86px] grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-md border border-[#E7D8A8] bg-white px-3 py-2"><div className="min-w-0"><p className="whitespace-normal break-words text-sm font-bold leading-5">{work.title || work.text}</p>{work.title && <p className="mt-0.5 whitespace-normal break-words text-xs font-semibold leading-5 text-[#5B5650]">{work.text}</p>}</div>{canManage && <div className="flex shrink-0 items-start gap-1"><button type="button" title={`Editar ${singular}`} onClick={() => editItem(work)} className="grid h-7 w-7 place-items-center rounded-md border border-[#E7D8A8] bg-white text-[#2D2A26] hover:border-[#2D2A26]"><Pencil size={14} /></button><button type="button" title={`Excluir ${singular}`} onClick={() => deleteItem(work)} className="grid h-7 w-7 place-items-center rounded-md border border-[#E7D8A8] bg-white text-[#8A1F1F] hover:border-[#8A1F1F]"><Trash2 size={14} /></button></div>}</article>)}
+      </div>
+      {!items.length && <div className="mt-2"><EmptyState text={empty} /></div>}
+    </section>
+  );
 }
 function KddWork({ state, setState, stage, updateStage }: { state: WorkshopState; setState: React.Dispatch<React.SetStateAction<WorkshopState>>; stage: Stage; updateStage: (stageId: string, fn: (stage: Stage) => Stage) => void }) {
   const canValidateKdd = currentParticipant(state)?.status === "facilitador";
