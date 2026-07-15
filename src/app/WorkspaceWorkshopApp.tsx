@@ -217,7 +217,7 @@ interface Stage {
   taxImpacts?: WorkItem[];
   taxObligations?: WorkItem[];
   taxNeeds?: WorkItem[];
-  kdd: { draft: string; final: string; suggestions: string[]; comments: string[]; status: "em validação" | "em revisão" | "validado" | "pendente" };
+  kdd: { draft: string; final: string; suggestions: string[]; comments: string[]; status: "em validação" | "em revisão" | "validado" | "pendente"; updatedBy?: string; updatedAt?: string };
   kpis: { status: string; message: string; items: string[] };
   kpiItems?: WorkItem[];
   pains: WorkItem[];
@@ -981,7 +981,7 @@ function useWorkshopState() {
         writeAfterRemoteApply.current = false;
         // Backfill conservador: registros locais com ids novos são incorporados sem
         // remover nem substituir registros que já existem no banco.
-        const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState) : remoteSnapshot.state;
+        const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState, browserBelongsToFacilitator()) : remoteSnapshot.state;
         writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
         setState((current) => applyRemoteWorkshopState(current, backfilled));
       } else if (legacyState) {
@@ -1098,25 +1098,45 @@ function useWorkshopState() {
   return { state, setState, updateStage, saveStatus };
 }
 
-function mergeBrowserOnlyRecords(remoteState: WorkshopState, browserState: WorkshopState): WorkshopState {
+function mergeBrowserOnlyRecords(remoteState: WorkshopState, browserState: WorkshopState, recoverFacilitatorEdits: boolean): WorkshopState {
   const remote = hydrateWorkshopState(remoteState);
   const browser = hydrateWorkshopState(browserState);
-  const appendMissing = <T extends { id: string }>(databaseItems: T[], browserItems: T[]) => {
+  const deletedIds = new Set(browser.contributions
+    .filter((item) => recoverFacilitatorEdits && item.relatedItemId && item.content.toLocaleLowerCase("pt-BR").includes("excluído:"))
+    .map((item) => item.relatedItemId as string));
+  const time = (value?: string) => value ? Date.parse(value) || 0 : 0;
+  const mergeRecovered = <T extends { id: string; updatedAt?: string }>(databaseItems: T[], browserItems: T[]) => {
+    const browserById = new Map(browserItems.map((item) => [item.id, item]));
+    const merged = databaseItems
+      .filter((item) => !recoverFacilitatorEdits || !deletedIds.has(item.id))
+      .map((databaseItem) => {
+        const browserItem = browserById.get(databaseItem.id);
+        if (!recoverFacilitatorEdits || !browserItem) return databaseItem;
+        return time(browserItem.updatedAt) > time(databaseItem.updatedAt) ? browserItem : databaseItem;
+      });
     const databaseIds = new Set(databaseItems.map((item) => item.id));
-    return [...databaseItems, ...browserItems.filter((item) => !databaseIds.has(item.id))];
+    return [...merged, ...browserItems.filter((item) => !databaseIds.has(item.id) && !deletedIds.has(item.id))];
   };
+  const preferBrowserScalar = <T extends { updatedAt?: string }>(databaseValue: T, browserValue: T) =>
+    recoverFacilitatorEdits && time(browserValue.updatedAt) > time(databaseValue.updatedAt) ? browserValue : databaseValue;
   return {
     ...remote,
-    participants: appendMissing(remote.participants, browser.participants),
-    contributions: appendMissing(remote.contributions, browser.contributions),
+    participants: mergeRecovered(remote.participants, browser.participants),
+    contributions: mergeRecovered(remote.contributions, browser.contributions),
     stages: remote.stages.map((stage) => {
       const local = browser.stages.find((item) => item.id === stage.id);
       if (!local) return stage;
-      const merged = { ...stage } as Stage;
+      const localHasKddAudit = local.kdd.comments.some((comment) => /^(Editado|Validado) por /.test(comment) && !stage.kdd.comments.includes(comment));
+      const recoveredKdd = preferBrowserScalar(stage.kdd, local.kdd);
+      const merged = {
+        ...stage,
+        taxImpact: preferBrowserScalar(stage.taxImpact, local.taxImpact),
+        kdd: recoverFacilitatorEdits && !stage.kdd.updatedAt && localHasKddAudit ? local.kdd : recoveredKdd,
+      } as Stage;
       stageArrayKeys.forEach((key) => {
         const remoteItems = (stage as unknown as Record<string, Array<{ id: string }>>)[key] ?? [];
         const browserItems = (local as unknown as Record<string, Array<{ id: string }>>)[key] ?? [];
-        (merged as unknown as Record<string, unknown>)[key] = appendMissing(remoteItems, browserItems);
+        (merged as unknown as Record<string, unknown>)[key] = mergeRecovered(remoteItems, browserItems);
       });
       return merged;
     }),
@@ -1326,6 +1346,15 @@ function savedEntryDraft(): EntryDraft {
     return { ...defaultEntryDraft, ...parsed, profile, area: parsed.area && areas.includes(parsed.area) ? parsed.area : defaultEntryDraft.area };
   } catch {
     return defaultEntryDraft;
+  }
+}
+
+function browserBelongsToFacilitator() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAST_PARTICIPANT_KEY) || "null") as Partial<EntryDraft> | null;
+    return saved?.profile === "Facilitadora";
+  } catch {
+    return false;
   }
 }
 
@@ -2001,12 +2030,14 @@ function KddWork({ state, setState, stage, updateStage }: { state: WorkshopState
   const save = () => {
     const text = draft.trim();
     if (!text) return;
-    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, draft: text, final: s.kdd.status === "validado" ? text : s.kdd.final, status: s.kdd.status === "validado" ? "validado" : "em revisão", comments: [`Editado por ${currentParticipant(state)?.name ?? "Facilitadora"} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
+    const participantName = currentParticipant(state)?.name ?? "Facilitadora";
+    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, draft: text, final: s.kdd.status === "validado" ? text : s.kdd.final, status: s.kdd.status === "validado" ? "validado" : "em revisão", updatedBy: participantName, updatedAt: now(), comments: [`Editado por ${participantName} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
     addContribution(setState, state, { type: "sugestão de KDD", content: `KDD editado: ${text}` });
     setEditing(false);
   };
   const validate = () => {
-    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, status: "validado", final: draft.trim() || s.kdd.final || s.kdd.draft, draft: draft.trim() || s.kdd.draft, comments: [`Validado por ${currentParticipant(state)?.name ?? "Facilitadora"} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
+    const participantName = currentParticipant(state)?.name ?? "Facilitadora";
+    updateStage(stage.id, (s) => ({ ...s, kdd: { ...s.kdd, status: "validado", final: draft.trim() || s.kdd.final || s.kdd.draft, draft: draft.trim() || s.kdd.draft, updatedBy: participantName, updatedAt: now(), comments: [`Validado por ${participantName} em ${new Date().toLocaleString("pt-BR")}`, ...s.kdd.comments] } }));
     addContribution(setState, state, { type: "comentário", content: "KDD preliminar validado" });
   };
   return <div className="grid gap-3"><section className="rounded-lg border-l-4 border-[#FFC629] bg-[#FFF9E3] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-bold uppercase tracking-[0.14em] text-[#756F68]">KDD preliminar</p><Badge>{stage.kdd.status}</Badge></div>{canValidateKdd && !editing && <button type="button" title="Editar KDD" onClick={() => setEditing(true)} className="grid h-8 w-8 place-items-center rounded-md border border-[#D8D8D8] bg-white text-[#756F68] hover:border-[#2D2A26] hover:text-[#2D2A26]"><Pencil size={15} /></button>}</div>{editing ? <div className="mt-3 grid gap-3"><textarea autoFocus className={`${inputClass()} min-h-36 resize-y text-lg font-bold leading-8`} value={draft} onChange={(event) => setDraft(event.target.value)} /><div className="flex flex-wrap gap-2"><PrimaryButton disabled={!draft.trim()} onClick={save}>Salvar KDD</PrimaryButton><SecondaryButton onClick={() => { setDraft(stage.kdd.final || stage.kdd.draft); setEditing(false); }}>Cancelar</SecondaryButton></div></div> : <p className="mt-3 text-2xl font-bold leading-9">{stage.kdd.final || stage.kdd.draft}</p>}</section>{canValidateKdd && <div className="flex flex-wrap gap-2"><PrimaryButton onClick={validate}><Check size={17} />Validar KDD</PrimaryButton></div>}</div>;
