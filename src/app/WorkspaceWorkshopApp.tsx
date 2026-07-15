@@ -962,37 +962,48 @@ function useWorkshopState() {
   useEffect(() => {
     if (!supabaseEnabled()) return;
     let cancelled = false;
-    void loadSupabaseState().then((remoteSnapshot) => {
-      if (cancelled) return;
-      if (!remoteSnapshot) {
-        setSaveStatus("erro");
-        return;
-      }
-      const legacyRaw = localStorage.getItem(STORAGE_KEY);
-      const legacyState = legacyRaw ? hydrateWorkshopState(JSON.parse(legacyRaw) as WorkshopState) : null;
-      const safetyBackup = {
-        exportedAt: now(),
-        workspaceId: currentWorkspaceId(),
-        remote: remoteSnapshot,
-        browser: legacyState,
-      };
-      localStorage.setItem(SAFETY_BACKUP_KEY, JSON.stringify(safetyBackup));
-      lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
-      lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
-      lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
-      applyingRemoteState.current = true;
-      writeAfterRemoteApply.current = false;
-      // Backfill conservador: registros locais com ids novos são incorporados sem
-      // remover nem substituir registros que já existem no banco.
-      const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState, browserBelongsToFacilitator()) : remoteSnapshot.state;
-      writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
-      setState((current) => applyRemoteWorkshopState(current, backfilled));
-      setSupabaseHydrated(true);
-      setSaveStatus("salvo");
-    }).catch(() => {
-      if (!cancelled) setSaveStatus("erro");
-    });
-    return () => { cancelled = true; };
+    let retryTimer: number | undefined;
+    const retry = () => {
+      if (!cancelled) retryTimer = window.setTimeout(loadRemote, 2000);
+    };
+    const loadRemote = () => {
+      void loadSupabaseState().then((remoteSnapshot) => {
+        if (cancelled) return;
+        if (!remoteSnapshot) {
+          setSaveStatus("erro");
+          retry();
+          return;
+        }
+        const legacyRaw = localStorage.getItem(STORAGE_KEY);
+        const legacyState = legacyRaw ? hydrateWorkshopState(JSON.parse(legacyRaw) as WorkshopState) : null;
+        const safetyBackup = {
+          exportedAt: now(),
+          workspaceId: currentWorkspaceId(),
+          remote: remoteSnapshot,
+          browser: legacyState,
+        };
+        localStorage.setItem(SAFETY_BACKUP_KEY, JSON.stringify(safetyBackup));
+        lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+        lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
+        lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
+        applyingRemoteState.current = true;
+        writeAfterRemoteApply.current = false;
+        // Backfill conservador: registros locais com ids novos são incorporados sem
+        // remover nem substituir registros que já existem no banco.
+        const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState, browserBelongsToFacilitator()) : remoteSnapshot.state;
+        writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
+        setState((current) => applyRemoteWorkshopState(current, backfilled));
+        setSupabaseHydrated(true);
+        setSaveStatus("salvo");
+      }).catch(() => {
+        if (!cancelled) {
+          setSaveStatus("erro");
+          retry();
+        }
+      });
+    };
+    loadRemote();
+    return () => { cancelled = true; if (retryTimer) window.clearTimeout(retryTimer); };
   }, []);
   useEffect(() => {
     if (!supabaseEnabled()) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -1094,7 +1105,7 @@ function useWorkshopState() {
     writeAfterRemoteApply.current = true;
     setState((current) => ({ ...current, stages: current.stages.map((s) => (s.id === stageId ? normalizeStage(fn(s)) : s)) }));
   };
-  return { state, setState, updateStage, saveStatus };
+  return { state, setState, updateStage, saveStatus, ready: supabaseHydrated };
 }
 
 function mergeBrowserOnlyRecords(remoteState: WorkshopState, browserState: WorkshopState, recoverFacilitatorEdits: boolean): WorkshopState {
@@ -2632,7 +2643,7 @@ function buildText(state: WorkshopState) {
 }
 
 export default function WorkspaceWorkshopApp() {
-  const { state, setState, updateStage, saveStatus } = useWorkshopState();
+  const { state, setState, updateStage, saveStatus, ready } = useWorkshopState();
   const participant = currentParticipant(state);
   const [workshopStarted, setWorkshopStarted] = useState(false);
   useEffect(() => {
@@ -2650,6 +2661,7 @@ export default function WorkspaceWorkshopApp() {
       ? ({ ...current, workspacePhase: "validacao_manha", activeView: "room", activeStageId: "etapa-1", activeActivity: "fluxo", viewingStageId: "", viewingActivity: "" })
       : ({ ...current, activeView: "room", viewingStageId: "etapa-1", viewingActivity: "fluxo" }));
   };
+  if (!ready) return <main className="grid min-h-screen place-items-center bg-[#F6F6F4] p-6 text-[#2D2A26]"><section className="max-w-lg rounded-lg border border-[#D8D8D8] bg-white p-8 text-center shadow-sm"><Database className="mx-auto text-[#FFC629]" size={36} /><h1 className="mt-4 text-2xl font-bold">Reconectando ao banco…</h1><p className="mt-3 text-sm leading-6 text-[#5B5650]">Aguardando o snapshot compartilhado da workspace. Nenhum dado inicial será exibido ou salvo durante a reconexão.</p>{saveStatus === "erro" && <p className="mt-4 rounded-md bg-[#FFF4CC] px-3 py-2 text-sm font-bold text-[#6F5400]">A conexão falhou. Nova tentativa automática em andamento.</p>}</section></main>;
   if (!participant) return <ActionModalProvider><EntryScreen setState={setState} /></ActionModalProvider>;
   if (!workshopStarted) return <ActionModalProvider><WorkshopOpening state={state} setState={setState} onStart={startWorkshop} /></ActionModalProvider>;
   return <ActionModalProvider><AppShell state={state} setState={setState} saveStatus={saveStatus}>{state.activeView === "room" && <Room state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "stages" && <StagesView state={state} setState={setState} />}{state.activeView === "hypotheses" && <HypothesesView state={state} setState={setState} updateStage={updateStage} />}{state.activeView === "prioritization" && <Prioritization state={state} updateStage={updateStage} />}{state.activeView === "plans" && <Plans state={state} updateStage={updateStage} />}{state.activeView === "summary" && <Summary state={state} />}{state.activeView === "facilitation" && participant.status === "facilitador" && <Facilitation state={state} setState={setState} updateStage={updateStage} />}</AppShell></ActionModalProvider>;
