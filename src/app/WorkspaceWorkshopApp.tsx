@@ -762,7 +762,7 @@ async function loadSupabaseState(): Promise<SupabaseSnapshot | null> {
   const config = supabaseConfig();
   if (!config) return null;
   try {
-    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state,updated_at", limit: "1", _: String(Date.now()) });
+    const params = new URLSearchParams({ id: `eq.${config.workshopId}`, select: "state,updated_at", limit: "1" });
     const response = await fetch(`${config.url}/rest/v1/${SUPABASE_SNAPSHOT_TABLE}?${params.toString()}`, { headers: supabaseHeaders(config.key), cache: "no-store" });
     if (!response.ok) return null;
     const rows = await response.json() as Array<{ state?: WorkshopState; updated_at?: string }>;
