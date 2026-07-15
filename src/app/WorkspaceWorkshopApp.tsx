@@ -964,6 +964,10 @@ function useWorkshopState() {
     let cancelled = false;
     void loadSupabaseState().then((remoteSnapshot) => {
       if (cancelled) return;
+      if (!remoteSnapshot) {
+        setSaveStatus("erro");
+        return;
+      }
       const legacyRaw = localStorage.getItem(STORAGE_KEY);
       const legacyState = legacyRaw ? hydrateWorkshopState(JSON.parse(legacyRaw) as WorkshopState) : null;
       const safetyBackup = {
@@ -973,23 +977,18 @@ function useWorkshopState() {
         browser: legacyState,
       };
       localStorage.setItem(SAFETY_BACKUP_KEY, JSON.stringify(safetyBackup));
-      if (remoteSnapshot) {
-        lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
-        lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
-        lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
-        applyingRemoteState.current = true;
-        writeAfterRemoteApply.current = false;
-        // Backfill conservador: registros locais com ids novos são incorporados sem
-        // remover nem substituir registros que já existem no banco.
-        const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState, browserBelongsToFacilitator()) : remoteSnapshot.state;
-        writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
-        setState((current) => applyRemoteWorkshopState(current, backfilled));
-      } else if (legacyState) {
-        writeAfterRemoteApply.current = true;
-        setState((current) => applyRemoteWorkshopState(current, legacyState));
-      }
-    }).finally(() => {
-      if (!cancelled) { setSupabaseHydrated(true); setSaveStatus("salvo"); }
+      lastRemoteUpdatedAt.current = remoteSnapshot.updatedAt;
+      lastPersistedSharedState.current = sharedWorkshopSignature(remoteSnapshot.state);
+      lastRemoteState.current = hydrateWorkshopState({ ...initialState(), ...remoteSnapshot.state, persistence: "supabase" });
+      applyingRemoteState.current = true;
+      writeAfterRemoteApply.current = false;
+      // Backfill conservador: registros locais com ids novos são incorporados sem
+      // remover nem substituir registros que já existem no banco.
+      const backfilled = legacyState ? mergeBrowserOnlyRecords(remoteSnapshot.state, legacyState, browserBelongsToFacilitator()) : remoteSnapshot.state;
+      writeAfterRemoteApply.current = Boolean(legacyState && !sameValue(backfilled, remoteSnapshot.state));
+      setState((current) => applyRemoteWorkshopState(current, backfilled));
+      setSupabaseHydrated(true);
+      setSaveStatus("salvo");
     }).catch(() => {
       if (!cancelled) setSaveStatus("erro");
     });
